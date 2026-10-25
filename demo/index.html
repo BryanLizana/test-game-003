@@ -64,8 +64,10 @@
   #touch { position: fixed; inset: 0; z-index: 11; display: none; pointer-events: none; user-select: none; -webkit-user-select: none; }
   #touch.on { display: block; }
   #lookPad { position: absolute; top: 0; right: 0; width: 55%; height: 100%; pointer-events: auto; touch-action: none; }
-  #stick { position: absolute; left: 28px; bottom: 28px; width: 132px; height: 132px; border-radius: 50%; pointer-events: auto;
-    touch-action: none; border: 1px solid rgba(125,255,168,.35); background: rgba(0,0,0,.25); }
+  #moveZone { position: absolute; top: 0; left: 0; width: 45%; height: 100%; pointer-events: auto; touch-action: none; }
+  #stick { position: absolute; left: 28px; bottom: 28px; width: 132px; height: 132px; border-radius: 50%; pointer-events: none;
+    border: 1px solid rgba(125,255,168,.35); background: rgba(0,0,0,.25); opacity: .45; transition: opacity .15s; }
+  #stick.on { opacity: 1; transition: none; }
   #knob { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%;
     background: rgba(125,255,168,.25); border: 1px solid rgba(125,255,168,.6); }
   .tbtn { position: absolute; width: 74px; height: 74px; border-radius: 50%; pointer-events: auto; touch-action: none;
@@ -108,8 +110,8 @@
     <kbd>E</kbd> interactuar · <kbd>V</kbd> voces · <kbd>F</kbd> FPS · <kbd>Esc</kbd> pausa<br>
     <span style="font-size:15px">Sin ratón: <kbd>←</kbd> <kbd>→</kbd> para girar</span>
   </div>
-  <p id="startTouch" style="font-size:16px;color:#999">Celular en horizontal · joystick para andar (a fondo, correr) ·
-    mueve el teléfono o arrastra a la derecha para mirar · <b>E</b> interactuar</p>
+  <p id="startTouch" style="font-size:16px;color:#999">Mejor en horizontal · pulgar izquierdo para andar (a fondo, correr) ·
+    arrastra a la derecha para mirar · <b>E</b> interactuar · <b>Giro</b> activa el giroscopio</p>
   <button id="startBtn">Empezar</button>
 </div>
 <div id="pause" class="screen"><h1 style="font-size:48px">PAUSA</h1><button id="resumeBtn">Continuar</button></div>
@@ -121,6 +123,7 @@
 </div>
 <div id="touch">
   <div id="lookPad"></div>
+  <div id="moveZone"></div>
   <div id="stick"><div id="knob"></div></div>
   <div id="btnUse" class="tbtn">E</div>
   <div id="btnJump" class="tbtn">Saltar</div>
@@ -2513,14 +2516,22 @@ $('startBtn').onclick = () => {
 const touchMove = { f: 0, st: 0, run: false };
 const TOUCH = matchMedia('(pointer: coarse)').matches || new URLSearchParams(location.search).has('tactil');
 if (TOUCH) {
-  const ui = $('touch'), knob = $('knob'), stick = $('stick');
+  const ui = $('touch'), knob = $('knob'), stick = $('stick'), zone = $('moveZone');
   const R = 52;
+  // Joystick flotante: aparece donde apoyas el pulgar en la mitad izquierda y vuelve a su sitio al soltar
   let stickId = null, sx = 0, sy = 0;
-  stick.addEventListener('pointerdown', (e) => { stickId = e.pointerId; stick.setPointerCapture(e.pointerId);
-    const r = stick.getBoundingClientRect(); sx = r.left + r.width / 2; sy = r.top + r.height / 2; moveStick(e); });
-  stick.addEventListener('pointermove', (e) => { if (e.pointerId === stickId) moveStick(e); });
-  const endStick = (e) => { if (e.pointerId !== stickId) return; stickId = null; touchMove.f = touchMove.st = 0; touchMove.run = false; knob.style.transform = ''; };
-  stick.addEventListener('pointerup', endStick); stick.addEventListener('pointercancel', endStick);
+  zone.addEventListener('pointerdown', (e) => { if (stickId !== null) return; stickId = e.pointerId; zone.setPointerCapture(e.pointerId);
+    sx = e.clientX; sy = e.clientY; stick.style.left = sx - 66 + 'px'; stick.style.top = sy - 66 + 'px'; stick.style.bottom = 'auto';
+    stick.classList.add('on'); moveStick(e); });
+  zone.addEventListener('pointermove', (e) => { if (e.pointerId === stickId) moveStick(e); });
+  const endStick = (e) => { if (e.pointerId !== stickId) return; stickId = null; touchMove.f = touchMove.st = 0; touchMove.run = false;
+    knob.style.transform = ''; stick.classList.remove('on'); stick.style.left = stick.style.top = stick.style.bottom = ''; };
+  zone.addEventListener('pointerup', endStick); zone.addEventListener('pointercancel', endStick);
+  // Sin la mano con el farol en pantalla (tapa mucho en un celular); su luz sigue alumbrando
+  [hand, lantern].forEach((g) => g.traverse((o) => { if (o.isMesh || o.isSprite) o.visible = false; }));
+  // Campo de visión según la forma de la pantalla: más amplio en horizontal y sobre todo en vertical
+  const fitFov = () => { camera.fov = Math.min(105, Math.max(80, 2 * Math.atan(Math.tan(52 * Math.PI / 180) / camera.aspect) * 180 / Math.PI)); camera.updateProjectionMatrix(); };
+  fitFov(); addEventListener('resize', fitFov);
   function moveStick(e) {
     let dx = e.clientX - sx, dy = e.clientY - sy; const d = Math.hypot(dx, dy);
     if (d > R) { dx *= R / d; dy *= R / d; }
@@ -2544,7 +2555,8 @@ if (TOUCH) {
   hold($('btnUse'), () => { keys.KeyE = true; onUse(); }, () => { keys.KeyE = false; });
   hold($('btnJump'), () => { jumpQueued = true; });
   // Giroscopio: orientación del teléfono → dirección de la cámara; se aplican solo las diferencias entre lecturas
-  const gyro = { on: true, last: null };
+  const gyro = { on: false, last: null };                          // apagado por defecto: se activa con «Giro»
+  $('btnGyro').classList.add('off');
   const _e = new THREE.Euler(), _q = new THREE.Quaternion(), _qs = new THREE.Quaternion(), _d = new THREE.Vector3();
   const _back = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)), _z = new THREE.Vector3(0, 0, 1);
   addEventListener('deviceorientation', (ev) => {
@@ -2567,7 +2579,7 @@ if (TOUCH) {
     ui.classList.add('on');
     try { screen.orientation?.lock?.('landscape').catch(() => {}); } catch (e) { /* no todos los navegadores lo permiten */ }
     if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission)
-      DeviceOrientationEvent.requestPermission().then((r) => { if (r !== 'granted') { gyro.on = false; $('btnGyro').classList.add('off'); } }).catch(() => {});
+      $('btnGyro').addEventListener('pointerdown', () => DeviceOrientationEvent.requestPermission().catch(() => {}), { once: true });
   });
 }
 let focus = null;
