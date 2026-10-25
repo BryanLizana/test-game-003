@@ -1,0 +1,11 @@
+node_modules/
+.DS_Store
+Thumbs.db
+*.log
+
+# Documentos de trabajo (no se publican)
+*.md
+*.stackdump
+
+# Originales en alta calidad (el juego usa demo/assets)
+arte-fuente/

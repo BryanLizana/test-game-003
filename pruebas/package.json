@@ -1,0 +1,15 @@
+{
+  "name": "la-luz-verde-pruebas",
+  "private": true,
+  "description": "Pruebas automáticas del demo con Firefox sin ventana, y conversión de imágenes a WebP.",
+  "scripts": {
+    "partida": "node test.js",
+    "subida": "node climb.js",
+    "senda": "node scan.js",
+    "vistas": "node views.js"
+  },
+  "dependencies": {
+    "puppeteer-core": "^25.16.0",
+    "sharp": "^0.35.5"
+  }
+}
