@@ -5,7 +5,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
   const browser = await puppeteer.launch({ browser: 'firefox', executablePath: process.env.FIREFOX_PATH || 'C:/Program Files/Mozilla Firefox/firefox.exe', headless: true, dumpio: !!process.env.DUMP,
-    extraPrefsFirefox: { 'media.autoplay.default': 0, 'webgl.force-enabled': true } });
+    extraPrefsFirefox: { 'media.autoplay.default': 0, 'webgl.force-enabled': true, 'media.volume_scale': '0.0', 'media.webspeech.synth.enabled': false } });
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 720 });
   page.on('console', (m) => { if (['error', 'warning'].includes(m.type())) console.log('CONSOLE', m.type(), m.text(), m.location().url); });

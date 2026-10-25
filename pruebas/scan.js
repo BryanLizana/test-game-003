@@ -1,7 +1,7 @@
 // Recorre la senda: desde el centro de cada punto, comprueba si algo bloquea antes del borde (d < 1.3)
 const puppeteer = require('puppeteer-core');
 (async () => {
-  const browser = await puppeteer.launch({ browser: 'firefox', executablePath: process.env.FIREFOX_PATH || 'C:/Program Files/Mozilla Firefox/firefox.exe', headless: true });
+  const browser = await puppeteer.launch({ browser: 'firefox', executablePath: process.env.FIREFOX_PATH || 'C:/Program Files/Mozilla Firefox/firefox.exe', headless: true, extraPrefsFirefox: { 'media.volume_scale': '0.0', 'media.webspeech.synth.enabled': false } });
   const page = await browser.newPage();
   page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
   await page.goto('http://localhost:8765/');

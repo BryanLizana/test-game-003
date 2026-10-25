@@ -4,7 +4,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const tag = process.argv[2] || 'v';
 require('fs').mkdirSync(__dirname + '/capturas', { recursive: true });
 (async () => {
-  const browser = await puppeteer.launch({ browser: 'firefox', executablePath: process.env.FIREFOX_PATH || 'C:/Program Files/Mozilla Firefox/firefox.exe', headless: true });
+  const browser = await puppeteer.launch({ browser: 'firefox', executablePath: process.env.FIREFOX_PATH || 'C:/Program Files/Mozilla Firefox/firefox.exe', headless: true, extraPrefsFirefox: { 'media.volume_scale': '0.0', 'media.webspeech.synth.enabled': false } });
   const page = await browser.newPage(); await page.setViewport({ width: 1280, height: 720 });
   page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
   await page.goto('http://localhost:8765/'); await page.click('#startBtn');

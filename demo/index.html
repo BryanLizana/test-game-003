@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>La Luz Verde — Demo</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Homemade+Apple&family=IM+Fell+English:ital@0;1&display=swap" rel="stylesheet">
@@ -59,6 +59,24 @@
   .book .torn { font-style: italic; color: #7a6a52; font-size: 16px; }
   #writeText { font-family: "Homemade Apple", cursive; font-size: 22px; min-height: 80px; line-height: 38px;
     margin-top: 10px; color: #1d2a4a; }
+  /* Controles táctiles: joystick a la izquierda, mirar arrastrando a la derecha (y giroscopio), botones */
+  canvas { touch-action: none; }
+  #touch { position: fixed; inset: 0; z-index: 11; display: none; pointer-events: none; user-select: none; -webkit-user-select: none; }
+  #touch.on { display: block; }
+  #lookPad { position: absolute; top: 0; right: 0; width: 55%; height: 100%; pointer-events: auto; touch-action: none; }
+  #stick { position: absolute; left: 28px; bottom: 28px; width: 132px; height: 132px; border-radius: 50%; pointer-events: auto;
+    touch-action: none; border: 1px solid rgba(125,255,168,.35); background: rgba(0,0,0,.25); }
+  #knob { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%;
+    background: rgba(125,255,168,.25); border: 1px solid rgba(125,255,168,.6); }
+  .tbtn { position: absolute; width: 74px; height: 74px; border-radius: 50%; pointer-events: auto; touch-action: none;
+    border: 1px solid rgba(125,255,168,.6); background: rgba(0,0,0,.35); color: var(--verde); font: inherit; font-size: 22px;
+    display: flex; align-items: center; justify-content: center; }
+  .tbtn.down { background: rgba(125,255,168,.25); }
+  #btnUse { right: 30px; bottom: 120px; } #btnJump { right: 120px; bottom: 34px; font-size: 16px; }
+  #btnGyro { right: 22px; top: 64px; width: 54px; height: 54px; font-size: 13px; }
+  #btnGyro.off { opacity: .45; }
+  #startTouch { display: none; }
+  @media (pointer: coarse) { #startTouch { display: block; } .screen .keys { display: none; } }
 </style>
 <script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }</script>
 </head>
@@ -90,6 +108,8 @@
     <kbd>E</kbd> interactuar · <kbd>V</kbd> voces · <kbd>F</kbd> FPS · <kbd>Esc</kbd> pausa<br>
     <span style="font-size:15px">Sin ratón: <kbd>←</kbd> <kbd>→</kbd> para girar</span>
   </div>
+  <p id="startTouch" style="font-size:16px;color:#999">Celular en horizontal · joystick para andar (a fondo, correr) ·
+    mueve el teléfono o arrastra a la derecha para mirar · <b>E</b> interactuar</p>
   <button id="startBtn">Empezar</button>
 </div>
 <div id="pause" class="screen"><h1 style="font-size:48px">PAUSA</h1><button id="resumeBtn">Continuar</button></div>
@@ -98,6 +118,13 @@
   <p id="endStats"></p>
   <p style="color:#777">Siguiente parte: la linterna (escena 4).</p>
   <button onclick="location.reload()">Volver a jugar</button>
+</div>
+<div id="touch">
+  <div id="lookPad"></div>
+  <div id="stick"><div id="knob"></div></div>
+  <div id="btnUse" class="tbtn">E</div>
+  <div id="btnJump" class="tbtn">Saltar</div>
+  <div id="btnGyro" class="tbtn">Giro</div>
 </div>
 
 <script type="module">
@@ -377,7 +404,10 @@ floors.push({ kind: 'roca', terrain: true, at: gridH,
   const geo = new THREE.BufferGeometry(), n = G.nx * G.nz, pos = new Float32Array(n * 3), idx = [];
   for (let j = 0; j < G.nz; j++) for (let i = 0; i < G.nx; i++) {
     const k = j * G.nx + i; pos.set([G.x0 + i * G.c, G.h[k], G.z0 + j * G.c], k * 3);
-    if (i < G.nx - 1 && j < G.nz - 1) idx.push(k, k + G.nx, k + 1, k + 1, k + G.nx, k + G.nx + 1);
+    // Abrir solo la malla bajo el pozo; conservar alturas y colisiones de la senda.
+    const x = G.x0 + i * G.c, z = G.z0 + j * G.c;
+    const shaftCell = x < 2.8 && x + G.c > 1.8 && z < 2.5 && z + G.c > 1.5;
+    if (i < G.nx - 1 && j < G.nz - 1 && !shaftCell) idx.push(k, k + G.nx, k + 1, k + 1, k + G.nx, k + G.nx + 1);
   }
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('aPath', new THREE.BufferAttribute(G.p, 1));
@@ -396,7 +426,9 @@ seaMat.onBeforeCompile = (sh) => {
   sh.uniforms.uTime = U.time;
   sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uTime;')
     .replace('#include <begin_vertex>', `vec3 transformed = vec3(position);
-      transformed.z += sin(position.x * 0.09 + uTime * 0.9) * 0.45 + sin(position.y * 0.13 - uTime * 1.3) * 0.3 + sin((position.x + position.y) * 0.31 + uTime * 2.1) * 0.12;`);
+      float dockShelter = (1.0 - smoothstep(3.2, 5.5, abs(position.x + 22.0))) * smoothstep(37.0, 40.0, position.y) * (1.0 - smoothstep(53.5, 56.0, position.y));
+      float swell = sin(position.x * 0.09 + uTime * 0.9) * 0.45 + sin(position.y * 0.13 - uTime * 1.3) * 0.3 + sin((position.x + position.y) * 0.31 + uTime * 2.1) * 0.12;
+      transformed.z += swell * mix(1.0, .055, dockShelter);`);
 };
 const sea = noRay(new THREE.Mesh(seaGeo, seaMat));
 sea.rotation.x = -Math.PI / 2; sea.position.y = Y_MAR - 0.15; scene.add(sea);
@@ -615,24 +647,6 @@ for (const [f, broken] of [[0.0, false], [0.38, true], [0.62, false]]) {
 
 const pathLight = new THREE.PointLight(0xffa850, 4, 10, 1.5); pathLight.position.copy(pathLights[0]); scene.add(pathLight);
 
-// Niebla baja: bancos de bruma a ras del mar y pegados al acantilado (pocos planos grandes y muy transparentes)
-const mist = [];
-{
-  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
-  for (let i = 0; i < 40; i++) {
-    const x = 20 + Math.random() * 88, y = 20 + Math.random() * 88, r = 10 + Math.random() * 30, gr = g.createRadialGradient(x, y, 0, x, y, r);
-    gr.addColorStop(0, 'rgba(150,160,170,0.18)'); gr.addColorStop(1, 'rgba(150,160,170,0)'); g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
-  }
-  const mt = canvasTex(c);
-  for (let i = 0; i < 12; i++) {
-    const a = rnd(0, 6.3), r = rnd(20, 55), low = i < 8;
-    const m = noRay(new THREE.Mesh(new THREE.PlaneGeometry(rnd(30, 50), rnd(30, 50)),
-      new THREE.MeshBasicMaterial({ map: mt, transparent: true, opacity: low ? 0.7 : 0.45, depthWrite: false, color: 0x9aa4ae })));
-    m.rotation.x = -Math.PI / 2; m.position.set(Math.cos(a) * r, low ? Y_MAR + rnd(1, 3) : rnd(-16, -8), Math.sin(a) * r);
-    m.userData.drift = rnd(0.2, 0.6); scene.add(m); mist.push(m);
-  }
-}
-
 // Ruta de referencia para el bot de pruebas: muelle → senda → puente → piedras → puerta
 {
   ROUTE.push({ x: DOCK_X, z: DOCK_Z0 - 1.5 });
@@ -650,34 +664,96 @@ const mist = [];
 }
 
 // ---------- Muelle de madera ----------
-addTo(lam(0x3d3226), boxGeo, V(DOCK_X, Y_MAR - 0.1, (DOCK_Z0 + DOCK_Z1) / 2), new THREE.Euler(), V(2.2, 0.2, DOCK_Z0 - DOCK_Z1));
-floorBox(DOCK_X - 1.1, DOCK_X + 1.1, DOCK_Z1 - 0.5, DOCK_Z0, Y_MAR, 'muelle');
-const gulls = [];
-for (const [px, pz] of [[1.1, -41], [-1.1, -43.5], [1.1, -46], [-1.1, -48.5], [1.1, -51]]) {
-  cyl(0.09, 0.09, 2.6, 0x2a2219, DOCK_X + px, Y_MAR - 0.5, pz);
-  if (pz === -43.5 || pz === -48.5 || pz === -41) {
-    const g = new THREE.Group(); g.position.set(DOCK_X + px, Y_MAR + 0.85, pz); scene.add(g);
-    const body = sphere(0.12, 0xb8b8b0, 0, 0, 0, { parent: g }); body.scale.set(1, 0.8, 1.7);
-    const head = new THREE.Group(); head.position.set(0, 0.13, 0.12); g.add(head);
-    sphere(0.075, 0xc8c8c0, 0, 0, 0, { parent: head });
-    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.1, 6), lam(0x9a8a3a));
-    beak.rotation.x = Math.PI / 2; beak.position.z = 0.09; head.add(beak);
-    sphere(0.014, 0x000000, 0.045, 0.02, 0.05, { parent: head }); sphere(0.014, 0x000000, -0.045, 0.02, 0.05, { parent: head });
-    g.rotation.y = Math.random() * 6; gulls.push(head);
+TEX.madera = tex('assets/madera.webp');
+const dockWood = new THREE.MeshLambertMaterial({ map: TEX.madera, color: 0xa49277 });
+{
+  const root = new THREE.Group(); root.position.set(DOCK_X, Y_MAR, 0); scene.add(root);
+  const planks = [], posts = [], rope = [], crust = [], algae = [], glow = [], beam = new THREE.BoxGeometry(1, 1, 1), round = new THREE.CylinderGeometry(1, 1, 1, 10);
+  const dockSpan = DOCK_Z0 - DOCK_Z1 + .5;
+  for (let i = 0; i < 42; i++) planks.push([beam, V((hash2(i, 3) - .5) * .035, -.07, DOCK_Z1 - .5 + (i + .5) * dockSpan / 42), V(2.18, .14, dockSpan / 42 - .018), new THREE.Euler(0, .006 * Math.sin(i), 0)]);
+  for (const side of [-1, 1]) planks.push([beam, V(side * .78, -.24, (DOCK_Z0 + DOCK_Z1 - .5) / 2), V(.18, .26, dockSpan)]);
+  for (const z of [-41, -43.5, -46, -48.5, -51]) for (const side of [-1, 1]) {
+    const x = side * 1.12;
+    solids.push(solidBox(DOCK_X + x, z, .24, .24, 0, Y_MAR - 1.8, Y_MAR + .7), solidBox(DOCK_X + side * .95, z, .22, .18, 0, Y_MAR, Y_MAR + .32));
+    planks.push([round, V(x, -.55, z), V(.12, 2.5, .12)]);
+    posts.push([round, V(side * .95, .16, z), V(.055, .32, .055)], [beam, V(side * .95, .29, z), V(.22, .055, .065)]);
+    for (let k = 0; k < 4; k++) rope.push([new THREE.TorusGeometry(.13, .012, 5, 16), V(x, .35 + k * .024, z), V(1, 1, 1), new THREE.Euler(Math.PI / 2, 0, 0)]);
+    for (let k = 0; k < 9; k++) { const a = k * 2.4; crust.push([new THREE.SphereGeometry(1, 5, 4), V(x + Math.cos(a) * .123, .08 - k * .04, z + Math.sin(a) * .123), V(.028, .022, .028)]); }
+    for (let k = 0; k < 3; k++) {
+      const px = x + Math.cos(k * 2.1) * .125, pz = z + Math.sin(k * 2.1) * .125;
+      algae.push([new THREE.TubeGeometry(new THREE.CatmullRomCurve3([V(px, .06, pz), V(px + .025, -.1, pz + .03), V(px - .02, -.42, pz + .035)]), 6, .012, 4, false)]);
+    }
+    if (side === -1 && (z === -41 || z === -48.5)) {
+      posts.push([round, V(x, 1.1, z), V(.017, 1.45, .017)], [beam, V(x, 1.8, z), V(.22, .06, .22)], [beam, V(x, 1.54, z), V(.18, .05, .18)]);
+      glow.push([new THREE.CylinderGeometry(.065, .065, .21, 8), V(x, 1.67, z)]);
+    }
   }
+  propBatch(root, dockWood, planks); propBatch(root, lam(0x393933), posts); propBatch(root, lam(0x817157), rope);
+  propBatch(root, lam(0x73756b), crust); propBatch(root, new THREE.MeshBasicMaterial({ color: 0xba9454 }), glow);
+  propBatch(root, lam(0x344238), algae);
+  beam.dispose(); round.dispose();
 }
+floorBox(DOCK_X - 1.1, DOCK_X + 1.1, DOCK_Z1 - 0.5, DOCK_Z0, Y_MAR, 'muelle');
 flushBatches();
 const SPAWN = V(DOCK_X, Y_MAR, DOCK_Z0 - 0.8);
 
 // Bote y barquero
-const boat = new THREE.Group(); boat.position.set(DOCK_X + 2.3, Y_MAR - 0.3, -43); scene.add(boat);
-box(1.5, 0.5, 3.8, 0x3a2a1c, 0, 0, 0, { parent: boat });
-box(1.2, 0.1, 3.4, 0x1c140e, 0, 0.26, 0, { parent: boat });
-const boatman = new THREE.Group(); boatman.position.set(0, 0.3, 0.8); boat.add(boatman);
-cyl(0.28, 0.36, 1.0, 0x1d1f22, 0, 0.5, 0, { parent: boatman });
-sphere(0.2, 0x7a6a5a, 0, 1.15, 0, { parent: boatman });
-cyl(0.02, 0.32, 0.25, 0x15161a, 0, 1.36, 0, { parent: boatman });
-boatman.rotation.y = Math.PI * 0.7; // no te mira
+// Piezas con UV unidas por material y por parte animada, sin un mesh por dedo.
+function propBatch(parent, material, parts) {
+  const list = parts.map(([geo, pos = V(0, 0, 0), scale = V(1, 1, 1), rot = new THREE.Euler()]) => {
+    const g = geo.index ? geo.toNonIndexed() : geo.clone();
+    for (const key of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(key)) g.deleteAttribute(key);
+    g.applyMatrix4(new THREE.Matrix4().compose(pos, new THREE.Quaternion().setFromEuler(rot), scale)); return g;
+  });
+  const mesh = new THREE.Mesh(mergeGeometries(list), material); parent.add(mesh); list.forEach(g => g.dispose()); return mesh;
+}
+TEX.madera = TEX.madera || tex('assets/madera.webp');
+const matBoatWood = new THREE.MeshLambertMaterial({ map: TEX.madera, color: 0x9a8267 });
+const matOldCoat = new THREE.MeshLambertMaterial({ map: tex('assets/hule-farero.webp'), color: 0x777269 });
+const matKnit = new THREE.MeshLambertMaterial({ map: tex('assets/lana-catre.webp'), color: 0x79746d });
+const matWornLeather = new THREE.MeshPhongMaterial({ map: tex('assets/cuero-botas-mojado.webp'), color: 0x968476, shininess: 12, specular: 0x29221b });
+const matPlayerGlove = new THREE.MeshPhongMaterial({ map: tex('assets/cuero-guante-castano.webp'), color: 0xd8ba92, emissive: 0x281608, emissiveIntensity: .22, shininess: 15, specular: 0x55402a });
+const matOldFace = new THREE.MeshLambertMaterial({ map: tex('assets/barquero-rostro.webp'), color: 0xc0aca0 });
+const matOldHands = lam(0x9a8875), matGreyHair = lam(0x79776d), matDarkDetail = lam(0x171410);
+const boat = new THREE.Group(); boat.position.set(DOCK_X + 2.3, Y_MAR - .12, -43); scene.add(boat);
+{
+  const hull = new THREE.Shape();
+  hull.moveTo(0, -1.98); hull.quadraticCurveTo(.73, -1.78, .75, -.8); hull.lineTo(.7, 1.48); hull.quadraticCurveTo(0, 1.92, -.7, 1.48); hull.lineTo(-.75, -.8); hull.quadraticCurveTo(-.73, -1.78, 0, -1.98);
+  const inner = new THREE.Path(); inner.moveTo(0, -1.78); inner.quadraticCurveTo(-.57, -1.56, -.6, -.75); inner.lineTo(-.56, 1.35); inner.quadraticCurveTo(0, 1.67, .56, 1.35); inner.lineTo(.6, -.75); inner.quadraticCurveTo(.57, -1.56, 0, -1.78); hull.holes.push(inner);
+  const geo = new THREE.ExtrudeGeometry(hull, { depth: .46, bevelEnabled: true, bevelSize: .025, bevelThickness: .025, bevelSegments: 1 }); geo.rotateX(-Math.PI / 2);
+  const woodParts = [[geo]], plank = new THREE.BoxGeometry(1, 1, 1);
+  for (let i = 0; i < 6; i++) woodParts.push([plank, V(-.5 + i * .2, .08, 0), V(.18, .07, 3.15)]);
+  for (const z of [-.85, .65]) woodParts.push([plank, V(0, .4, z), V(1.24, .09, .3)]);
+  propBatch(boat, matBoatWood, woodParts); geo.dispose(); plank.dispose();
+}
+const boatman = new THREE.Group(); boatman.position.set(0, .22, .8); boatman.scale.set(1.12, 1.24, 1.12); boat.add(boatman);
+{
+  const ball = new THREE.SphereGeometry(1, 16, 12), limb = new THREE.CapsuleGeometry(1, 2, 4, 10);
+  propBatch(boatman, matOldCoat, [[ball, V(0, .64, .015), V(.29, .38, .19), new THREE.Euler(.2, 0, 0)],
+    [ball, V(0, .82, -.06), V(.3, .22, .2)], [limb, V(-.28, .59, .11), V(.075, .14, .075), new THREE.Euler(-.35, 0, -.12)],
+    [limb, V(.28, .59, .11), V(.075, .14, .075), new THREE.Euler(-.35, 0, .12)],
+    [ball, V(0, .35, .01), V(.31, .14, .21)]]);
+  propBatch(boatman, matWornLeather, [[limb, V(-.14, .15, 0), V(.09, .1, .09)], [limb, V(.14, .15, 0), V(.09, .1, .09)],
+    [ball, V(-.14, -.01, .11), V(.105, .075, .19)], [ball, V(.14, -.01, .11), V(.105, .075, .19)]]);
+  const face = new THREE.SphereGeometry(1, 24, 18), p = face.attributes.position, uv = face.attributes.uv;
+  for (let i = 0; i < p.count; i++) uv.setXY(i, .5 + p.getX(i) * .46, .5 + p.getY(i) * .48);
+  propBatch(boatman, matOldFace, [[face, V(0, 1.1, .16), V(.105, .12, .105), new THREE.Euler(.18, 0, 0)]]);
+  propBatch(boatman, matGreyHair, [[ball, V(0, 1.045, .255), V(.085, .045, .015)], [ball, V(-.035, 1.075, .267), V(.035, .008, .007)], [ball, V(.035, 1.075, .267), V(.035, .008, .007)]]);
+  propBatch(boatman, matOldHands, [[ball, V(0, 1.105, .27), V(.016, .028, .022)], [ball, V(-.016, 1.09, .273), V(.012, .01, .014)],
+    ...[-1, 1].flatMap(s => [[ball, V(s * .26, .3, .19), V(.06, .085, .033)], ...Array.from({ length: 4 }, (_, i) => [limb, V(s * .26 + (i - 1.5) * .021, .245, .2), V(.012, .022, .013), new THREE.Euler(.18, 0, 0)])])]);
+  propBatch(boatman, matKnit, [[ball, V(0, 1.245, .14), V(.13, .08, .12)], [new THREE.TorusGeometry(.115, .02, 7, 20), V(0, 1.205, .16), V(1, 1, 1), new THREE.Euler(Math.PI / 2, 0, 0)]]);
+  propBatch(boatman, matDarkDetail, [.5, .65, .8].map(y => [ball, V(.035, y, .202), V(.014, .014, .007)]));
+  face.dispose(); ball.dispose(); limb.dispose();
+}
+boatman.rotation.y = -Math.PI * .36; // encorvado hacia el muelle, sin cambiar su lugar en el bote
+{
+  const iron = lam(0x40392b), flame = new THREE.MeshBasicMaterial({ color: 0xffca79 });
+  propBatch(boat, iron, [[boxGeo, V(-.38, .98, 1.05), V(.18, .05, .18)], [boxGeo, V(-.38, 1.22, 1.05), V(.2, .045, .2)],
+    ...[-1, 1].flatMap(x => [-1, 1].map(z => [boxGeo, V(-.38 + x * .075, 1.1, 1.05 + z * .075), V(.012, .22, .012)])),
+    [boxGeo, V(-.62, .97, 1.05), V(.035, 1.3, .035)], [boxGeo, V(-.5, 1.6, 1.05), V(.28, .035, .035)], [new THREE.CylinderGeometry(.007, .007, .34, 6), V(-.38, 1.4, 1.05)]]);
+  propBatch(boat, flame, [[new THREE.CylinderGeometry(.045, .045, .16, 10), V(-.38, 1.1, 1.05)]]);
+  const boatLamp = new THREE.PointLight(0xffc58b, 2, 3.6, 1.8); boatLamp.position.set(-.5, 1.4, 1.05); boat.add(boatLamp);
+}
 
 // ---------- Faro (exterior) ----------
 const LH = new THREE.Vector3(-8, 0, -8);
@@ -696,6 +772,8 @@ for (const [y, a] of [[5, 0.8], [10.5, 2.6], [16, 4.4], [19.5, 0.3]]) {         
 // Galería: ménsula, plataforma y barandilla de hierro
 cyl(2.55, 1.75, 0.7, 0, LH.x, 22.75, LH.z, { seg: 24, m: matTower });
 cyl(2.7, 2.7, 0.18, 0, LH.x, 23.15, LH.z, { seg: 24, m: matIron });
+const GALLERY = { y: 23.24, inner: 1.8, outer: 2.3 };
+floors.push({ kind: 'balcon', at(x, z) { const r = Math.hypot(x - LH.x, z - LH.z); return r > 1.45 && r < 2.72 ? GALLERY.y : null; } });
 for (let i = 0; i < 28; i++) { const a = i / 28 * Math.PI * 2; cyl(0.025, 0.025, 1.0, 0, LH.x + Math.cos(a) * 2.6, 23.7, LH.z + Math.sin(a) * 2.6, { seg: 4, m: matIron }); }
 const rail = new THREE.Mesh(new THREE.TorusGeometry(2.6, 0.035, 5, 48), matIron); rail.rotation.x = Math.PI / 2; rail.position.set(LH.x, 24.2, LH.z); scene.add(rail);
 // Cámara de la linterna: murete de hierro, cristales verdes, montantes y cúpula de cobre oxidado
@@ -718,8 +796,51 @@ for (let i = 0; i < 6; i++) {
 noRay(optic);
 colliders.push({ minX: LH.x - 3.1, maxX: LH.x + 3.1, minZ: LH.z - 3.1, maxZ: LH.z + 3.1 });
 // Puerta de hierro con marco de piedra, mirando a la casa
-const lhFrame = box(1.5, 2.6, 0.4, 0, LH.x + 2.2, 1.6, LH.z + 2.2, { m: matTower }); lhFrame.rotation.y = Math.PI / 4;
-const lhDoor = box(1.0, 2.1, 0.12, 0x1f1a15, LH.x + 2.37, 1.35, LH.z + 2.37); lhDoor.rotation.y = Math.PI / 4;
+const marineAtlas = tex('assets/materiales-marinos-atlas.webp');
+function marineMaterial(col, row, scale, color) {
+  const mat = triMat({ side: marineAtlas, top: marineAtlas, scale, color }), build = mat.onBeforeCompile;
+  mat.customProgramCacheKey = () => `marine-${col}-${row}-${scale}`;
+  mat.onBeforeCompile = sh => {
+    build(sh);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
+      vec4 marineSample(sampler2D t, vec2 uv) { return texture2D(t, fract(uv) * .48 + vec2(${(col * .5 + .01).toFixed(2)}, ${(row * .5 + .01).toFixed(2)})); }`)
+      .replaceAll('texture2D(tSide,', 'marineSample(tSide,').replaceAll('texture2D(tTop,', 'marineSample(tTop,');
+  };
+  return mat;
+}
+const matMarineRust = marineMaterial(0, 0, 1.7, 0xb8aaa0);
+const matMarinePlank = marineMaterial(1, 0, .83, 0xb8aa91);
+const matMarineBark = marineMaterial(0, 1, 2.3, 0xa99a83);
+const lhFrame = new THREE.Group(); lhFrame.position.set(LH.x + 2.2, 1.6, LH.z + 2.2); lhFrame.rotation.y = Math.PI / 4; scene.add(lhFrame);
+const lhDoor = box(1.0, 2.1, 0.12, 0, LH.x + 2.37, 1.35, LH.z + 2.37, { m: matMarinePlank }); lhDoor.rotation.y = Math.PI / 4;
+{
+  // Sillares separados por juntas; no hay una caja maciza tapando la hoja.
+  const q = new THREE.Quaternion().setFromEuler(lhFrame.rotation);
+  for (const side of [-1, 1]) for (let row = 0; row < 6; row++)
+    addTo(matTower, boxGeo, V(side * .66, -1.08 + row * .39, 0).applyQuaternion(q).add(lhFrame.position),
+      lhFrame.rotation, V(.27 + (row % 2) * .025, .365, .43));
+  for (const x of [-.5, 0, .5]) addTo(matTower, boxGeo, V(x, .96, 0).applyQuaternion(q).add(lhFrame.position), lhFrame.rotation, V(.48, .26, .46));
+  const metal = [], wood = [], bolt = new THREE.SphereGeometry(1, 7, 5);
+  const part = (list, geo, x, y, z, sx, sy, sz, rz = 0) => {
+    const g = geo.index ? geo.toNonIndexed() : geo.clone();
+    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+    g.applyMatrix4(new THREE.Matrix4().compose(V(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, rz)), V(sx, sy, sz))); list.push(g);
+  };
+  for (const x of [-.47, .47]) part(metal, boxGeo, x, 0, .085, .045, 2.06, .035);
+  for (const y of [-.73, .12, .76]) {
+    part(metal, boxGeo, 0, y, .09, .98, .095, .045);
+    part(metal, new THREE.CylinderGeometry(1, 1, 1, 8), -.53, y, .06, .035, .23, .035);
+    for (const x of [-.41, -.22, .22, .41]) part(metal, bolt, x, y, .122, .018, .018, .01);
+  }
+  part(metal, boxGeo, -.03, -.05, .09, .075, 1.7, .03, -.43);
+  part(metal, boxGeo, .3, -.13, .115, .13, .22, .05);
+  part(wood, bolt, .3, -.16, .146, .012, .025, .004); // ojo de cerradura oscuro
+  part(metal, new THREE.TorusGeometry(.065, .012, 6, 16), .29, .04, .16, 1, 1, 1);
+  for (const [list, mat] of [[metal, matMarineRust], [wood, matIron]]) {
+    const m = new THREE.Mesh(mergeGeometries(list), mat); lhDoor.add(m); list.forEach(g => g.dispose());
+  }
+  bolt.dispose(); flushBatches();
+}
 inter(lhDoor, () => (S.phase === 'faro' ? 'Entrar al faro' : 'Puerta del faro'), () => {
   if (S.phase === 'faro') enterTower();
   else think('Cerrada por dentro. Arriba, la luz verde no deja de girar.');
@@ -727,40 +848,140 @@ inter(lhDoor, () => (S.phase === 'faro' ? 'Entrar al faro' : 'Puerta del faro'),
 const lanternLight = new THREE.PointLight(0x40ff80, 14, 60, 1.3); lanternLight.position.set(LH.x, 25.1, LH.z); scene.add(lanternLight);
 // Haces de luz que giran
 const beamPivot = new THREE.Group(); beamPivot.position.set(LH.x, 25.1, LH.z); scene.add(beamPivot);
-const beamGeo = new THREE.ConeGeometry(7, 70, 24, 1, true); beamGeo.translate(0, -35, 0); beamGeo.rotateZ(Math.PI / 2);
-const beamMat = new THREE.MeshBasicMaterial({ color: 0x5cff8f, transparent: true, opacity: 0.07, blending: THREE.AdditiveBlending,
-  depthWrite: false, side: THREE.DoubleSide, fog: false });
-for (const s of [0, Math.PI]) {
-  const b = noRay(new THREE.Mesh(beamGeo, beamMat)); b.rotation.set(0, s, -0.1); beamPivot.add(b);
+// Volumen sin final visible: se apaga a lo largo (antes del plano lejano), en los bordes según el ángulo de vista,
+// y la bruma y la lluvia lo atraviesan. Dos capas: núcleo estrecho y halo ancho muy tenue.
+const BEAM_LEN = 180;
+function beamLayer(r0, r1, opacity) {
+  const geo = new THREE.CylinderGeometry(r0, r1, BEAM_LEN, 32, 1, true); geo.translate(0, -BEAM_LEN / 2, 0); geo.rotateZ(Math.PI / 2);
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: new THREE.Color(0x9effc0) }, uOpacity: { value: opacity }, uTime: U.time },
+    vertexShader: `varying vec3 vL; varying vec3 vW; varying vec3 vN;
+      void main() { vL = position; vW = (modelMatrix * vec4(position, 1.0)).xyz; vN = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * vec4(vW, 1.0); }`,
+    fragmentShader: `uniform vec3 uColor; uniform float uOpacity; uniform float uTime; varying vec3 vL; varying vec3 vW; varying vec3 vN;
+      void main() {
+        float t = clamp(vL.x / ${BEAM_LEN.toFixed(1)}, 0.0, 1.0);
+        float along = exp(-t * 2.2) * (1.0 - smoothstep(0.4, 0.82, t)) * smoothstep(0.0, 0.015, t);
+        float edge = pow(abs(dot(normalize(vN), normalize(cameraPosition - vW))), 1.6);
+        float ang = atan(vL.z, vL.y);
+        float mist = 0.72 + 0.28 * sin(vL.x * 0.21 - uTime * 2.2 + sin(ang * 3.0 + uTime * 0.4) * 1.7) * sin(vL.x * 0.06 + ang * 2.0 - uTime * 0.7);
+        gl_FragColor = vec4(uColor, uOpacity * along * edge * mist);
+      }`,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  for (const s of [0, Math.PI]) { const b = noRay(new THREE.Mesh(geo, mat)); b.rotation.set(0, s, -0.1); beamPivot.add(b); beams.push(b); }
+}
+const beams = [];
+beamLayer(0.9, 17, 0.3);        // núcleo
+beamLayer(1.6, 40, 0.12);       // halo
+// Destello en la lente: crece cuando un haz pasa apuntando hacia ti
+const beamGlow = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+  const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(235,255,240,1)'); gr.addColorStop(0.15, 'rgba(140,255,180,0.55)'); gr.addColorStop(0.5, 'rgba(80,255,140,0.12)'); gr.addColorStop(1, 'rgba(80,255,140,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTex(c), blending: THREE.AdditiveBlending, depthWrite: false, fog: false, transparent: true }));
+  s.position.set(LH.x, 25.1, LH.z); s.scale.setScalar(5); scene.add(noRay(s)); return s;
+})();
+const _bd = new THREE.Vector3(), _bc = new THREE.Vector3();
+function updateBeamGlow() {
+  _bc.copy(camera.position).sub(beamGlow.position).normalize();
+  let f = 0; for (const b of beams) f = Math.max(f, _bd.set(1, 0, 0).transformDirection(b.matrixWorld).dot(_bc));
+  const k = Math.pow(Math.max(f, 0), 8);
+  beamGlow.material.opacity = 0.35 + 0.65 * k; beamGlow.scale.setScalar(5 + 22 * k);
 }
 const beamSpot = new THREE.SpotLight(0x5cff8f, 300, 90, 0.2, 0.6, 1.3);
 beamPivot.add(beamSpot); beamSpot.target.position.set(60, -8, 0); beamPivot.add(beamSpot.target);
 
 // ---------- Casa del farero (interior x∈[-4,4], z∈[-3,3]) ----------
 const WALL_H = 3;
-Object.assign(TEX, { madera: tex('assets/madera.webp'), pared: tex('assets/pared.webp'), pizarra: tex('assets/pizarra.webp'), muro: TEX.muro });
+Object.assign(TEX, { madera: TEX.madera || tex('assets/madera.webp'), pared: tex('assets/pared.webp'), pizarra: tex('assets/pizarra.webp'), muro: TEX.muro });
 const matFloor = triMat({ side: TEX.madera, top: TEX.madera, scale: 0.45, color: 0xb8aa98 });
 const matPlaster = triMat({ side: TEX.pared, top: TEX.pared, scale: 0.33, color: 0xc8beb0 });
 const matStoneW = triMat({ side: TEX.muro, top: TEX.muro, moss: 0.4, scale: 0.3, color: 0xb8b8b0 });
 const matSlate = triMat({ side: TEX.pizarra, top: TEX.pizarra, moss: 0.5, scale: 0.4, color: 0xa0a4a8 });
-const matBeam = lam(0x2e2219, { flatShading: true });
+const matBeam = triMat({ side: TEX.madera, top: TEX.madera, scale: 0.72, color: 0x695341 });
 Object.assign(TEX, { mueble: tex('assets/mueble.webp'), tela: tex('assets/tela.webp'), hierro: tex('assets/hierro.webp'),
-  techo: tex('assets/tablas-techo.webp'), alfombra: tex('assets/alfombra.webp'), mojado: tex('assets/suelo-mojado.webp') });
+  techo: tex('assets/tablas-techo.webp'), alfombra: tex('assets/alfombra.webp') });
 const matWood = triMat({ side: TEX.mueble, top: TEX.mueble, scale: 0.9, color: 0xd0c4b4 });
 const matCloth = triMat({ side: TEX.tela, top: TEX.tela, scale: 1.1, color: 0xc8c0b4 });
 const matStove = triMat({ side: TEX.hierro, top: TEX.hierro, scale: 0.9, color: 0xb0aaa4 });
 const matRoofIn = triMat({ side: TEX.techo, top: TEX.techo, scale: 0.5, color: 0xb8aa98 });
 const matRug = triMat({ side: TEX.alfombra, top: TEX.alfombra, scale: 0.38, color: 0xc8beb4 });
+const matOilskin = triMat({ side: tex('assets/hule-farero.webp'), top: TEX.tela, scale: 1.8, color: 0xb2a48b });
+const matHouseWax = lam(0xc5b58e), matHouseMetal = lam(0x858177), matHouseBread = lam(0x947045);
+const matHousePapers = new THREE.MeshLambertMaterial({ map: tex('assets/papeles-farero-atlas.webp'), side: THREE.DoubleSide, color: 0xc0ad8a });
+const matBookSpines = new THREE.MeshLambertMaterial({ map: tex('assets/lomos-farero-atlas.webp'), color: 0xc3b39e });
+const matClockDial = new THREE.MeshLambertMaterial({ map: tex('assets/reloj-farero-esfera.webp'), color: 0xc9baa1 });
+const woolTex = tex('assets/lana-catre.webp');
+const matHouseWool = triMat({ side: woolTex, top: woolTex, scale: 2.15, color: 0xb2a48d });
+const matBoots = new THREE.MeshPhongMaterial({ map: tex('assets/cuero-botas-mojado.webp'), color: 0x8b8074, shininess: 28, specular: 0x343430 });
+const matMarineUV = new THREE.MeshLambertMaterial({ map: marineAtlas, color: 0xb3a48c });
+// Lotes locales que conservan UV: un solo mesh por atlas, incluidos todos los lomos.
+const houseUVBatches = new Map();
+function houseUV(mat, geo, pos, rot = new THREE.Euler(), scale = V(1, 1, 1), tile = [0, 0, 1, 1]) {
+  const g = geo.index ? geo.toNonIndexed() : geo.clone(), uv = g.attributes.uv;
+  for (const key of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(key)) g.deleteAttribute(key);
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, tile[0] + .002 + uv.getX(i) * (tile[2] - .004), tile[1] + .002 + uv.getY(i) * (tile[3] - .004));
+  g.applyMatrix4(new THREE.Matrix4().compose(pos, new THREE.Quaternion().setFromEuler(rot), scale));
+  if (!houseUVBatches.has(mat)) houseUVBatches.set(mat, []);
+  houseUVBatches.get(mat).push(g);
+}
+function housePaper(x, y, z, w, h, angle = 0, variant = 0, fold = .02) {
+  const g = new THREE.PlaneGeometry(1, 1, 5, 6), p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const px = p.getX(i), py = p.getY(i);
+    p.setZ(i, fold * (Math.abs(px) * .3 + Math.max(0, px - .18) * 3 + .13 * Math.sin(py * 13 + px * 7)));
+  }
+  g.rotateX(-Math.PI / 2); g.computeVertexNormals();
+  houseUV(matHousePapers, g, V(x, y, z), new THREE.Euler(0, angle, 0), V(w, 1, h), [variant % 2 * .5, 0, .5, 1]); g.dispose();
+}
+const houseSpineGeo = new THREE.PlaneGeometry(1, 1, 4, 1);
+for (let i = 0; i < houseSpineGeo.attributes.position.count; i++) {
+  const x = houseSpineGeo.attributes.position.getX(i);
+  houseSpineGeo.attributes.position.setZ(i, .12 * Math.cos(x * Math.PI));
+}
+houseSpineGeo.computeVertexNormals();
+const houseFlames = [];
+// Perfil compartido, con borde fundido y pequeñas irregularidades en la cera.
+const houseWaxGeo = new THREE.LatheGeometry([[0, 0], [.86, 0], [1, .05], [.96, .65], [1.04, .94], [.93, 1], [.48, .94], [0, .93]].map(p => new THREE.Vector2(...p)), 14);
+{
+  const p = houseWaxGeo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i), a = Math.atan2(z, x);
+    const ripple = 1 + .045 * Math.sin(a * 5 + y * 8) + .025 * Math.cos(a * 9);
+    p.setXYZ(i, x * ripple, y + (y > .9 ? .018 * Math.sin(a * 3) : 0), z * ripple);
+  }
+  houseWaxGeo.computeVertexNormals();
+}
+const houseDripGeo = new THREE.SphereGeometry(1, 8, 6);
+function houseCandle(x, base, z, height = .16, radius = .025) {
+  addTo(matHouseWax, houseWaxGeo, V(x, base, z), new THREE.Euler(), V(radius, height, radius));
+  for (let i = 0; i < 5; i++) {
+    const a = i * 1.37, length = height * (.16 + hash2(i, x) * .28);
+    addTo(matHouseWax, houseDripGeo, V(x + Math.cos(a) * radius, base + height - length, z + Math.sin(a) * radius),
+      new THREE.Euler(), V(.007, length, .007));
+    addTo(matHouseWax, houseDripGeo, V(x + Math.cos(a) * radius * 1.3, base + .004, z + Math.sin(a) * radius * 1.2),
+      new THREE.Euler(), V(radius * .85, .005, radius * .6));
+  }
+  addTo(matStove, boxGeo, V(x, base + height + .007, z), new THREE.Euler(0, 0, .12), V(.004, .018, .004));
+  houseFlames.push(V(x, base + height + .034, z));
+}
 const wallMat = matPlaster;
 // Interior: suelo de tablones, techo con vigas, yeso por dentro
 // suelo de tablones con el hueco de la trampilla (x 1.8–2.8, z 1.5–2.5)
 box(5.9, 0.1, 6.2, 0, -1.15, 0, 0, { m: matFloor }); box(1.3, 0.1, 6.2, 0, 3.45, 0, 0, { m: matFloor });
 box(1.0, 0.1, 4.6, 0, 2.3, 0, -0.8, { m: matFloor }); box(1.0, 0.1, 0.6, 0, 2.3, 0, 2.8, { m: matFloor });
 floorBox(-4.1, 4.1, -3.1, 3.1, 0, 'casa');
+// Suelo continuo en la puerta: solapa casa y senda sobre la depresión del terreno.
+floorBox(-0.8, 0.8, 3.0, 4.2, 0, 'umbral');
+floorBox(-0.95, 0.95, 3.5, 4.21, 0, 'umbral'); // toda la anchura del escalón exterior
+addTo(matStoneW, boxGeo, V(0, -.1, 3.6), new THREE.Euler(), V(1.6, .2, 1.2));
 // pozo bajo la trampilla, con escalera de mano
-box(1.0, 2.2, 1.0, 0, 2.3, -1.1, 2.0, { m: lam(0x0c0a08, { side: THREE.BackSide }) });
-for (const dx of [-0.25, 0.25]) box(0.05, 2.2, 0.05, 0, 2.3 + dx, -1.1, 2.42, { m: matWood });
-for (let i = 0; i < 6; i++) box(0.5, 0.04, 0.05, 0, 2.3, -0.3 - i * 0.33, 2.42, { m: matWood });
+for (const x of [1.76, 2.84]) addTo(matStoneW, boxGeo, V(x, -1.62, 2), new THREE.Euler(), V(.08, 3.24, 1.16));
+for (const z of [1.46, 2.54]) addTo(matStoneW, boxGeo, V(2.3, -1.62, z), new THREE.Euler(), V(1, 3.24, .08));
+for (const dx of [-0.28, 0.28]) addTo(matWood, boxGeo, V(2.3 + dx, -1.55, 2.42), new THREE.Euler(), V(.065, 3.3, .07));
+for (let i = 0; i < 11; i++) addTo(matWood, boxGeo, V(2.3, -.2 - i * .28, 2.42), new THREE.Euler(), V(.58, .055, .075));
 // sin techo plano: tirantes y el tejado a la vista
 for (const x of [-2.6, 0, 2.6]) box(0.22, 0.25, 6.6, 0, x, WALL_H - 0.12, 0, { m: matBeam });
 for (const z of [-1.6, 1.6]) box(8.2, 0.12, 0.12, 0, 0, WALL_H + 1.25, z, { m: matBeam });
@@ -812,54 +1033,354 @@ shell(1.6, 0.9, 0.35, 0, WALL_H - 0.25, 3.38);                                  
 // Puerta de madera entreabierta, escalón y detalles de abandono
 const door = box(1.35, 2.15, 0.07, 0, 0, 0, 0, { m: matWood });
 door.geometry.translate(0.675, 1.075, 0); door.position.set(-0.7, 0, 3.28); door.rotation.y = 1.25;
-box(1.9, 0.18, 0.7, 0, 0, 0.09, 3.85, { m: matStoneW });
+box(1.9, 0.18, 0.7, 0, 0, -0.09, 3.85, { m: matStoneW });
 const shutter = box(0.5, 0.95, 0.05, 0, 2.0, 1.5, 3.62, { m: matWood }); shutter.rotation.set(0.05, -0.5, 0.25);   // contraventana colgando
 box(0.5, 0.95, 0.05, 0, 3.2, 1.75, 3.6, { m: matWood }).rotation.y = 0.2;
-for (let i = 0; i < 9; i++) cyl(0.09, 0.09, 1.0, 0x3b2c1f, -3.3 + (i % 3) * 0.2 + rnd(-0.03, 0.03), 0.12 + Math.floor(i / 3) * 0.17, 3.85, { seg: 7 }).rotation.z = Math.PI / 2; // leña
-cyl(0.32, 0.28, 0.85, 0x3a2a1c, 3.75, 0.43, 3.95, { seg: 12 });                                                                  // barril de lluvia
-cyl(0.3, 0.3, 0.02, 0x10181c, 3.75, 0.84, 3.95, { seg: 12 });
-colliders.push({ minX: -4.6, maxX: 4.6, minZ: -3.6, maxZ: -3.2 }, { minX: -4.6, maxX: -4.2, minZ: -3.6, maxZ: 3.6 },
-  { minX: 4.2, maxX: 4.6, minZ: -3.6, maxZ: 3.6 }, { minX: -4.6, maxX: -0.75, minZ: 3.2, maxZ: 3.55 }, { minX: 0.75, maxX: 4.6, minZ: 3.2, maxZ: 3.55 },
-  { minX: 3.45, maxX: 4.1, minZ: 3.6, maxZ: 4.3 });
-// Cristales viejos: sucios, con grietas, uno con un pico roto (se ve el exterior a través)
-function dirtyGlass(broken) {
-  const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d');
-  g.fillStyle = 'rgba(150,165,160,0.22)'; g.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 70; i++) { g.fillStyle = `rgba(60,55,40,${Math.random() * 0.25})`; g.beginPath(); g.arc(Math.random() * 256, 180 + Math.random() * 90, Math.random() * 24, 0, 7); g.fill(); }
-  g.strokeStyle = 'rgba(220,230,230,0.5)'; g.lineWidth = 1;
-  for (let i = 0; i < 5; i++) { g.beginPath(); let x = 90 + Math.random() * 80, y = 90 + Math.random() * 80; g.moveTo(x, y);
-    for (let k = 0; k < 5; k++) { x += (Math.random() - 0.5) * 90; y += (Math.random() - 0.5) * 90; g.lineTo(x, y); } g.stroke(); }
-  if (broken) { g.globalCompositeOperation = 'destination-out'; g.beginPath(); g.moveTo(256, 0); g.lineTo(120, 0); g.lineTo(200, 110); g.lineTo(150, 150); g.lineTo(256, 190); g.fill(); }
-  return new THREE.MeshBasicMaterial({ map: canvasTex(c), transparent: true, depthWrite: false, side: THREE.DoubleSide });
+// Lena a la izquierda; tacho y saco a la derecha. El paso del bot por x=0 queda libre.
+{
+  const log = new THREE.CylinderGeometry(1, 1, 1, 11, 1, true), cut = new THREE.CircleGeometry(1, 11);
+  const base = floorAt(-3.3, 4.04, 10)?.y ?? 0;
+  for (let row = 0; row < 3; row++) for (let col = 0; col < 4 - row; col++) {
+    const x = -3.77 + col * .26 + row * .13, y = base + .125 + row * .205;
+    const length = .78 + hash2(col, row + 4) * .12, radius = .108 + hash2(row, col + 7) * .014;
+    addTo(matMarineBark, log, V(x, y, 4.04), new THREE.Euler(Math.PI / 2, 0, .025 * Math.sin(col)), V(radius, length, radius));
+    for (const side of [-1, 1]) houseUV(matMarineUV, cut, V(x, y, 4.04 + side * length / 2),
+      new THREE.Euler(0, side < 0 ? Math.PI : 0, col * .7), V(radius * .96, radius * .96, 1), [.5, .5, .5, .5]);
+  }
+  log.dispose(); cut.dispose();
+  colliders.push({ minX: -3.94, maxX: -2.82, minZ: 3.57, maxZ: 4.51 });
+  const binY = floorAt(2.6, 4.15, 10)?.y ?? 0;
+  const bin = new THREE.LatheGeometry([[0, 0], [.25, 0], [.29, .05], [.32, .65], [.31, .72], [.29, .72], [.275, .1], [0, .1]].map(p => new THREE.Vector2(...p)), 20);
+  addTo(matMarineRust, bin, V(2.6, binY + .005, 4.15)); bin.dispose();
+  addTo(matMarineRust, new THREE.CylinderGeometry(.34, .33, .035, 20), V(2.6, binY + .74, 4.15), new THREE.Euler(.04, 0, .055));
+  addTo(matMarineRust, new THREE.TorusGeometry(.08, .012, 6, 14, Math.PI), V(2.6, binY + .76, 4.15));
+  const rib = new THREE.CylinderGeometry(.009, .009, .59, 5);
+  for (let i = 0; i < 12; i++) {
+    const a = i * Math.PI / 6; addTo(matMarineRust, rib, V(2.6 + Math.cos(a) * .306, binY + .38, 4.15 + Math.sin(a) * .306));
+  }
+  rib.dispose();
+  for (const y of [.08, .69]) addTo(matMarineRust, new THREE.TorusGeometry(.3, .012, 5, 20), V(2.6, binY + y, 4.15), new THREE.Euler(Math.PI / 2, 0, 0));
+  const sack = new THREE.SphereGeometry(1, 10, 7);
+  addTo(matOilskin, sack, V(2.12, binY + .23, 4.17), new THREE.Euler(.1, .4, .2), V(.22, .23, .22));
+  addTo(matOilskin, sack, V(2.15, binY + .47, 4.17), new THREE.Euler(), V(.055, .06, .05)); sack.dispose();
+  housePaper(1.96, binY + .035, 4.39, .15, .2, .6, 1, .05);
+  colliders.push({ minX: 1.88, maxX: 2.96, minZ: 3.8, maxZ: 4.52 });
 }
-const frontGlass = new THREE.Mesh(new THREE.PlaneGeometry(1.36, 1.15), dirtyGlass(true)); frontGlass.position.set(2.825, 1.67, 3.22); scene.add(frontGlass);
-for (const [w, h, dx, dy] of [[0.06, 1.2, -0.66, 0], [0.06, 1.2, 0.66, 0], [1.36, 0.06, 0, 0.6], [1.36, 0.06, 0, -0.6], [0.04, 1.15, 0, 0], [1.36, 0.04, 0, 0]])
-  box(w, h, 0.06, 0x2a2018, 2.825 + dx, 1.67 + dy, 3.24);
+colliders.push({ minX: -4.6, maxX: 4.6, minZ: -3.6, maxZ: -3.2 }, { minX: -4.6, maxX: -4.2, minZ: -3.6, maxZ: 3.6 },
+  { minX: 4.2, maxX: 4.6, minZ: -3.6, maxZ: 3.6 }, { minX: -4.6, maxX: -0.75, minZ: 3.2, maxZ: 3.55 }, { minX: 0.75, maxX: 4.6, minZ: 3.2, maxZ: 3.55 });
+// Cuarterones con alfa real; el pico perdido es un hueco en la geometria.
+const matOldGlass = new THREE.MeshLambertMaterial({ map: tex('assets/vidrio-salitre.webp'), color: 0xc8c2b2,
+  transparent: true, opacity: .5, depthWrite: false, side: THREE.DoubleSide });
+function houseGlassGeometry(w, h, broken) {
+  const pieces = [], pw = w / 2 - .022, ph = h / 2 - .022;
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+    const shape = new THREE.Shape(), l = -pw / 2, r = pw / 2, b = -ph / 2, t = ph / 2;
+    shape.moveTo(l, b); shape.lineTo(r, b);
+    if (broken && sx === 1 && sy === 1) {
+      shape.lineTo(r, b + .1); shape.lineTo(.015, -.04); shape.lineTo(.1, .06); shape.lineTo(-.1, t);
+    } else { shape.lineTo(r, t); }
+    shape.lineTo(l, t); shape.closePath();
+    const g = new THREE.ShapeGeometry(shape), p = g.attributes.position, uv = g.attributes.uv;
+    for (let i = 0; i < p.count; i++) uv.setXY(i, p.getX(i) / pw + .5, p.getY(i) / ph + .5);
+    g.rotateY(sx * sy * .006); g.translate(sx * w / 4, sy * h / 4, sx * sy * .002); pieces.push(g);
+  }
+  const merged = mergeGeometries(pieces); pieces.forEach(g => g.dispose()); return merged;
+}
+function houseWindowFrame(x, y, z, w, h, ry) {
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0));
+  const piece = (mat, width, height, depth, dx, dy, dz) => addTo(mat, boxGeo,
+    V(dx, dy, dz).applyQuaternion(q).add(V(x, y, z)), new THREE.Euler(0, ry, 0), V(width, height, depth));
+  for (const s of [-1, 1]) {
+    piece(matWood, .12, h + .22, .16, s * (w / 2 + .025), 0, 0);
+    piece(matWood, w + .18, .1, .16, 0, s * (h / 2 + .025), 0);
+    piece(matWood, .035, h, .035, s * (w / 2 - .045), 0, .09);
+    piece(matHouseWax, .017, h - .04, .018, s * (w / 2 - .07), 0, .075);
+    piece(matHouseWax, w - .1, .017, .018, 0, s * (h / 2 - .05), .075);
+  }
+  // En el este los travesanos quedan detras del vaho (x=3.96).
+  piece(matWood, .042, h, .025, 0, 0, .065);
+  piece(matWood, w, .042, .025, 0, 0, .065);
+  for (const s of [-1, 1]) {
+    piece(matHouseWax, .008, h, .012, s * .028, 0, .064);
+    piece(matHouseWax, w, .008, .012, 0, s * .028, .064);
+  }
+  piece(matWood, w + .3, .09, .36, 0, -h / 2 - .08, .08);
+  piece(matWood, w + .12, .16, .055, 0, -h / 2 - .18, .025);
+  for (let i = 0; i < 20; i++) {
+    const sign = i % 2 ? 1 : -1, v = hash2(i, w);
+    piece(matHouseWax, .018 + v * .025, .005 + v * .025, .006, sign * (w / 2 + .02), (v - .5) * h, .083);
+  }
+}
+const frontGlass = new THREE.Mesh(houseGlassGeometry(1.36, 1.15, true), matOldGlass);
+frontGlass.position.set(2.825, 1.67, 3.22); scene.add(frontGlass);
+houseWindowFrame(2.825, 1.67, 3.14, 1.36, 1.15, Math.PI);
 const doorSpill = new THREE.PointLight(0xffa850, 4, 9, 1.4); doorSpill.position.set(0, 2.2, 4); scene.add(doorSpill);
 // Lámpara de aceite colgada sobre la mesa
 const lampLight = new THREE.PointLight(0xffa850, 7, 11, 1.4); lampLight.position.set(-0.6, 2.1, 0); scene.add(lampLight);
 cyl(0.006, 0.006, 0.55, 0x1a1a1a, -0.6, WALL_H - 0.4, 0);
 cyl(0.05, 0.12, 0.08, 0x2a2622, -0.6, 2.32, 0);
 cyl(0.06, 0.06, 0.14, 0, -0.6, 2.2, 0, { m: new THREE.MeshBasicMaterial({ color: 0xffc37a }) });
-// Estante con frascos y libros en la pared del fondo, abrigo de hule junto a la puerta
-box(1.6, 0.05, 0.3, 0, -2.2, 1.9, -2.85, { m: matWood }); box(1.6, 0.05, 0.3, 0, -2.2, 1.45, -2.85, { m: matWood });
-for (let i = 0; i < 7; i++) {
-  if (i % 2) box(0.07, rnd(0.2, 0.3), 0.2, [0x5a2a22, 0x2a3a4a, 0x4a4a2a][i % 3], -2.85 + i * 0.2, 1.6, -2.85).rotation.z = rnd(-0.1, 0.25);
-  else cyl(0.05, 0.05, rnd(0.12, 0.2), 0x3a4a3a, -2.85 + i * 0.2, 2.0, -2.85);
+// Biblioteca de un guardián lector. Todo el detalle fijo se agrupa por material.
+{
+  const leather = [0x50382d, 0x343b3d, 0x55503b, 0x553430, 0x74604a].map(c => lam(c));
+  const paper = lam(0xb4a181), gilt = lam(0x8c7347), recess = matBeam;
+  const cube = (m, w, h, d, x, y, z, rz = 0, ry = 0) =>
+    addTo(m, boxGeo, V(x, y, z), new THREE.Euler(0, ry, rz), V(w, h, d));
+  const round = new THREE.CylinderGeometry(1, 1, 1, 10);
+  const cylinder = (m, r, h, x, y, z) => addTo(m, round, V(x, y, z), new THREE.Euler(), V(r, h, r));
+  // Semilla estable: mismos huecos, inclinaciones y tamaños en cada visita.
+  let serial = 0;
+  const bookAt = (x, y, z, w, h, d, tilt = 0, ry = 0) => {
+    const n = serial++, m = leather[n % leather.length];
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, tilt));
+    const part = (mat, sx, sy, sz, dx, dy, dz) => {
+      const p = V(dx, dy, dz).applyQuaternion(q).add(V(x, y, z));
+      addTo(mat, boxGeo, p, new THREE.Euler(0, ry, tilt), V(sx, sy, sz));
+    };
+    part(paper, w * .78, h * .94, d * .91, 0, 0, -.008);
+    for (const s of [-1, 1]) part(m, .009, h, d, s * (w / 2 - .004), 0, 0);
+    part(m, w, h, .012, 0, 0, d / 2);
+    houseUV(matBookSpines, houseSpineGeo, V(0, 0, d / 2 + .007).applyQuaternion(q).add(V(x, y, z)),
+      new THREE.Euler(0, ry, tilt), V(w, h, w), [n % 8 / 8, 0, 1 / 8, 1]);
+  };
+  for (const [left, right] of [[-3.02, -1.22], [1.35, 2.86]]) {
+    const mid = (left + right) / 2, width = right - left;
+    cube(recess, width, 2.8, .045, mid, 1.45, -2.965);
+    for (const x of [left, right]) {
+      cube(matWood, .095, 2.82, .39, x, 1.46, -2.78);
+      cube(matWood, .13, 2.74, .055, x, 1.45, -2.56);
+    }
+    for (const [y, h, depth] of [[.14, .22, .44], [2.88, .13, .46], [2.96, .045, .5]])
+      cube(matWood, width + .2, h, depth, mid, y, -2.77);
+    for (let row = 0; row < 6; row++) {
+      const base = .3 + row * .425;
+      cube(matWood, width, .045, .38, mid, base, -2.77);
+      let x = left + .09, i = 0;
+      while (x < right - .13) {
+        const seed = hash2(row * 47 + i++, left * 13);
+        const w = .042 + seed * .048, h = .23 + hash2(i * 17, row + left) * .14;
+        if (i % 13 === 0) { x += .13; continue; }
+        const lean = i % 9 === 0 ? -.16 : (seed - .5) * .035;
+        bookAt(x + w / 2, base + .025 + h / 2, -2.71 + seed * .025, w, h, .23 + seed * .045, lean);
+        x += w + (lean ? .012 : .004);
+      }
+    }
+    colliders.push({ minX: left - .05, maxX: right + .05, minZ: -3, maxZ: -2.55 });
+  }
+  // Boiserie baja y cornisas: rompe la pared plana sin alterar los huecos.
+  for (const [x, w] of [[-2.45, 3.0], [1.42, 1.4], [3.82, .28]]) {
+    cube(matWood, w, .72, .045, x, .42, 2.975);
+    for (const y of [.1, .79]) cube(matWood, w, .055, .075, x, y, 2.94);
+    for (let dx = -w / 2 + .12; dx < w / 2; dx += .45) cube(matBeam, .025, .6, .02, x + dx, .44, 2.94);
+  }
+  for (const x of [-3.97, 3.97]) {
+    cube(matWood, .045, .7, 5.9, x, .43, 0);
+    for (const y of [.12, .8]) cube(matWood, .075, .055, 5.9, x, y, 0);
+  }
+  cube(matWood, 7.9, .12, .1, 0, 2.81, -2.97);
+  // Pilas con páginas y cubiertas, un volumen abierto y hojas usadas como marcapáginas.
+  for (const [x, z, count] of [[-1.58, -2.32, 6], [2.62, -2.25, 4], [-2.9, .8, 3]]) {
+    for (let i = 0; i < count; i++) {
+      const y = .09 + i * .06, ry = hash2(i, x) * .5 - .25;
+      cube(paper, .27, .045, .2, x, y, z, 0, ry);
+      for (const dy of [-.026, .026]) cube(leather[i % 5], .29, .009, .22, x, y + dy, z, 0, ry);
+    }
+  }
+  const openBook = (x, y, z, ry) => {
+    for (const s of [-1, 1]) {
+      cube(leather[0], .23, .012, .32, x + s * .115, y, z, s * .12, ry);
+      cube(paper, .215, .025, .3, x + s * .11, y + .022, z, s * .12, ry);
+      for (let k = 0; k < 9; k++) cube(gilt, .15, .002, .002, x + s * .11, y + .038, z - .11 + k * .025, 0, ry);
+    }
+  };
+  openBook(-1.48, .08, -1.87, .12);
+  // Sillón orejero bajo la biblioteca, al calor de la estufa; paso libre por delante.
+  cube(matWood, .88, .16, .76, 1.53, .3, -2.13);
+  cube(matCloth, .77, .18, .7, 1.53, .45, -2.12);
+  cube(matCloth, .78, .86, .18, 1.53, .89, -2.43, -.03);
+  for (const s of [-1, 1]) {
+    cube(matCloth, .17, .68, .29, 1.53 + s * .38, 1.0, -2.35, -s * .09);
+    cube(matWood, .13, .12, .74, 1.53 + s * .44, .67, -2.12);
+    cube(matCloth, .15, .1, .66, 1.53 + s * .44, .75, -2.12);
+    for (const z of [-2.4, -1.85]) cube(matWood, .09, .28, .09, 1.53 + s * .33, .17, z);
+  }
+  // Pliegues de manta sobre el brazo y la rodilla, sin otro material texturado.
+  for (let i = 0; i < 7; i++) {
+    cube(matCloth, .048, .035, .64, 1.27 + i * .045, .56 + (i % 2) * .018, -2.08);
+    cube(matCloth, .048, .36, .035, 1.27 + i * .045, .37, -1.77);
+  }
+  colliders.push({ minX: 1.01, maxX: 2.05, minZ: -2.55, maxZ: -1.74 });
+  // Mesita de lectura: libro abierto, vaso, pipa y vela en botella.
+  cube(matWood, .65, .07, .52, .43, .65, -2.47);
+  for (const x of [.18, .68]) for (const z of [-2.65, -2.28]) cube(matWood, .055, .6, .055, x, .33, z);
+  colliders.push({ minX: .1, maxX: .76, minZ: -2.74, maxZ: -2.2 });
+  openBook(.36, .7, -2.45, .05);
+  cylinder(matStove, .045, .07, .64, .74, -2.26);
+  cube(matBeam, .2, .015, .022, .52, .71, -2.22, 0, -.2);
+  cylinder(gilt, .043, .1, .17, .76, -2.27);
+  const candle = (x, y, z) => {
+    cylinder(leather[2], .052, .17, x, y + .085, z);
+    cylinder(leather[2], .023, .1, x, y + .2, z);
+    houseCandle(x, y + .24, z, .15, .024);
+  };
+  candle(.66, .69, -2.61); candle(-1.58, .418, -2.32); // sobre la pila, sin atravesar el estante
+  // Aparador estrecho bajo los útiles marinos, fuera del acceso a la trampilla.
+  cube(matWood, .48, .8, .88, 3.7, .47, .68);
+  cube(matWood, .55, .075, .96, 3.7, .9, .68);
+  for (const z of [.45, .91]) {
+    cube(matBeam, .018, .58, .38, 3.45, .47, z);
+    cube(matWood, .018, .51, .31, 3.43, .47, z);
+    cylinder(gilt, .025, .06, 3.4, .58, z);
+  }
+  colliders.push({ minX: 3.42, maxX: 3.98, minZ: .19, maxZ: 1.17 });
+  // Catalejo en su soporte y barómetro de latón en la pared.
+  addTo(gilt, round, V(3.69, 1.06, .65), new THREE.Euler(Math.PI / 2, 0, 0), V(.042, .55, .042));
+  for (const z of [.43, .87]) cube(matWood, .22, .09, .06, 3.69, .98, z);
+  const barometer = (x, y, z, r) => {
+    const rotation = new THREE.Euler(0, 0, Math.PI / 2);
+    addTo(matWood, round, V(x, y, z), rotation, V(r + .045, .065, r + .045));
+    addTo(paper, round, V(x - .045, y, z), rotation, V(r, .015, r));
+    for (let i = 0; i < 17; i++) {
+      const a = -.75 * Math.PI + i * Math.PI * 1.5 / 16;
+      cube(gilt, .008, .018, .008, x - .058, y + Math.cos(a) * r * .82, z + Math.sin(a) * r * .82);
+    }
+    // Una sola aguja inclinada: instrumento de presion, no otro reloj.
+    addTo(matMarineRust, boxGeo, V(x - .063, y + .025, z + .035), new THREE.Euler(.85, 0, 0), V(.012, r * 1.25, .012));
+  };
+  barometer(3.94, 1.75, .68, .19);
+  // Unico reloj, detenido a las 7:17, con caja abierta sobre el pendulo.
+  cube(matWood, .06, 1.03, .46, -3.96, 2.24, .48);
+  for (const z of [.25, .71]) cube(matWood, .18, 1.02, .055, -3.85, 2.24, z);
+  for (const y of [1.72, 2.76]) cube(matWood, .22, .08, .54, -3.85, y, .48);
+  addTo(matWood, round, V(-3.83, 2.48, .48), new THREE.Euler(0, 0, Math.PI / 2), V(.205, .15, .205));
+  houseUV(matClockDial, new THREE.CircleGeometry(.177, 40), V(-3.748, 2.48, .48), new THREE.Euler(0, Math.PI / 2, 0));
+  for (const [a, length, width] of [[17 * Math.PI / 30, .145, .009], [(7 + 17 / 60) * Math.PI / 6, .105, .014]]) {
+    const dy = Math.cos(a) * length / 2, dz = -Math.sin(a) * length / 2;
+    addTo(matStove, boxGeo, V(-3.737, 2.48 + dy, .48 + dz), new THREE.Euler(-a, 0, 0), V(.008, length, width));
+  }
+  cube(gilt, .018, .37, .012, -3.79, 2.13, .48);
+  addTo(gilt, round, V(-3.78, 1.96, .48), new THREE.Euler(0, 0, Math.PI / 2), V(.075, .025, .075));
+  const clockGlass = noRay(new THREE.Mesh(new THREE.PlaneGeometry(.39, .92), new THREE.MeshBasicMaterial({ color: 0xafa68e, transparent: true, opacity: .075, depthWrite: false })));
+  clockGlass.rotation.y = Math.PI / 2; clockGlass.position.set(-3.72, 2.24, .48); scene.add(clockGlass);
+  // Baúl de marinero a los pies del catre, con herrajes y asas.
+  cube(matWood, .8, .4, .46, -2.63, .28, 2.63);
+  cube(matWood, .83, .09, .49, -2.63, .52, 2.63);
+  for (const x of [-2.91, -2.35]) {
+    cube(matStove, .045, .42, .02, x, .3, 2.87);
+    cube(matStove, .045, .018, .48, x, .57, 2.63);
+  }
+  cube(gilt, .09, .1, .02, -2.63, .44, 2.88);
+  colliders.push({ minX: -3.05, maxX: -2.21, minZ: 2.38, maxZ: 2.89 });
+  // Cortinas deshilachadas recogidas a los lados: el vaho queda a la vista.
+  for (const [cx, cz, east] of [[3.92, -.65, true], [2.825, 2.96, false]]) {
+    if (east) cube(matWood, .05, .05, 1.65, cx, 2.35, cz);
+    else cube(matWood, 1.65, .05, .05, cx, 2.35, cz);
+    for (const s of [-1, 1]) for (let i = 0; i < 5; i++) {
+      const offset = s * (.67 + i * .035), h = 1.18 + hash2(i, s) * .12;
+      cube(matCloth, east ? .035 : .047, h, east ? .047 : .035,
+        cx + (east ? -Math.sin(i * 2) * .024 : offset), 2.3 - h / 2,
+        cz + (east ? offset : -Math.sin(i * 2) * .024));
+    }
+  }
+  // Perchero de pared antiguo, con mangas caídas y cuello vuelto.
+  cube(matWood, .85, .12, .07, -1.23, 2.17, 2.93);
+  for (const x of [-1.5, -1.2, -.96]) cube(gilt, .025, .09, .12, x, 2.2, 2.87);
+  // Olla ennegrecida sobre la placa de la estufa.
+  cylinder(matStove, .15, .2, 3.28, 1.04, -2.25);
+  cylinder(matStove, .17, .025, 3.28, 1.15, -2.25);
+  cylinder(matBeam, .035, .045, 3.28, 1.185, -2.25);
+  // Farol de mesa suspendido: depósito, jaula y sombrerete sobre la llama existente.
+  cylinder(matStove, .095, .075, -.6, 2.075, 0);
+  cylinder(matStove, .17, .025, -.6, 2.33, 0);
+  for (const s of [-1, 1]) for (const t of [-1, 1])
+    cube(gilt, .012, .23, .012, -.6 + s * .075, 2.2, t * .075);
+  // Despensa con paneles y molduras.
+  for (const y of [.12, 1.98, 2.05]) cube(matWood, .77, .07, 1.38, 3.55, y, 2.1);
+  for (const z of [1.48, 2.08]) {
+    for (const y of [.22, .88, 1.75]) cube(matBeam, .02, .035, .51, 3.165, y, z + .3);
+    cube(gilt, .025, .07, .035, 3.14, 1.04, z + .48);
+  }
+  flushBatches();
+  round.dispose();
 }
-const coat = box(0.45, 1.05, 0.12, 0x2b2f1f, -1.2, 1.55, 2.92); coat.rotation.z = 0.04;
-sphere(0.03, 0x555555, -1.2, 2.12, 2.98);
+// Abrigo de hule junto a la puerta (interacción original).
+// Hule con hombros, volumen y mangas pesadas; la zona interactiva sigue junto al gancho.
+const coat = hitbox(.74, 1.16, .34, -1.2, 1.53, 2.81);
+{
+  const body = new THREE.LatheGeometry([[0, 0], [.18, 0], [.23, .04], [.215, .56], [.27, .86], [.2, 1], [.09, 1.04], [0, 1.01]].map(p => new THREE.Vector2(...p)), 16);
+  const p = body.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i), a = Math.atan2(z, x);
+    const fold = 1 + .07 * Math.sin(a * 7 + y * 3);
+    p.setXYZ(i, x * fold, y, z * .48 * fold);
+  }
+  body.computeVertexNormals();
+  addTo(matOilskin, body, V(-1.2, .98, 2.81)); body.dispose();
+  const sleeve = new THREE.CylinderGeometry(.085, .06, .72, 10);
+  for (const sign of [-1, 1]) {
+    addTo(matOilskin, sleeve, V(-1.2 + sign * .29, 1.57, 2.81), new THREE.Euler(.08, 0, sign * .16));
+    addTo(matOilskin, houseDripGeo, V(-1.2 + sign * .23, 1.92, 2.81), new THREE.Euler(), V(.12, .105, .08));
+    addTo(matOilskin, boxGeo, V(-1.2 + sign * .065, 1.98, 2.71), new THREE.Euler(0, sign * .3, sign * .4), V(.09, .15, .035));
+  }
+  sleeve.dispose();
+  addTo(matOilskin, boxGeo, V(-1.18, 1.48, 2.69), new THREE.Euler(0, .04, .02), V(.055, .86, .025));
+  for (const y of [1.22, 1.4, 1.58, 1.76]) addTo(matHouseMetal, houseDripGeo, V(-1.19, y, 2.671), new THREE.Euler(), V(.012, .012, .005));
+  // Bolsillos abultados, costuras de los punos y gancho curvo.
+  for (const sign of [-1, 1]) addTo(matOilskin, houseDripGeo, V(-1.2 + sign * .13, 1.29, 2.705), new THREE.Euler(), V(.065, .09, .025));
+  addTo(matHouseMetal, new THREE.TorusGeometry(.044, .009, 5, 12, Math.PI * 1.4), V(-1.2, 2.09, 2.82), new THREE.Euler(0, Math.PI, .3));
+  flushBatches();
+}
 inter(coat, 'Mirar el abrigo', () => think('Un abrigo de hule de muchacho. Te quedaría justo.'));
 
 // ---------- Desorden: alguien vive aquí, pero ya no ordena nada ----------
 {
   const wood = lam(0x3a2a1c, { flatShading: true }), dark = lam(0x241a12), cloth = lam(0x5a5246), paper = lam(0xd8ccae, { emissive: 0x15130e });
   // catre deshecho en la esquina, con la manta revuelta y la almohada mojada
-  const bed = box(0.95, 0.35, 1.95, 0, -3.5, 0.2, 1.95, { m: matWood, collide: true });
-  box(0.85, 0.12, 1.85, 0, -3.5, 0.43, 1.95, { m: matCloth });
-  const blanket = box(0.9, 0.12, 1.1, 0, -3.42, 0.52, 2.2, { m: matCloth }); blanket.rotation.set(0.1, 0.25, -0.12);
-  box(0.6, 0.08, 0.5, 0, -3.1, 0.5, 1.45, { m: matCloth }).rotation.set(-0.3, 0.6, 0.4);          // manta caída
-  box(0.45, 0.1, 0.3, 0x9a9488, -3.55, 0.54, 1.2);
+  const bed = hitbox(.95, .58, 1.95, -3.5, .32, 1.95);
+  const blanket = hitbox(.84, .18, 1.1, -3.45, .58, 2.22);
+  colliders.push({ minX: -3.975, maxX: -3.025, minZ: .975, maxZ: 2.925 });
+  // Largueros, somier de listones y cabecero de barrotes; huella original.
+  for (const x of [-3.9, -3.1]) {
+    addTo(matWood, boxGeo, V(x, .32, 1.95), new THREE.Euler(), V(.07, .14, 1.9));
+    for (const z of [1.03, 2.87]) addTo(matWood, boxGeo, V(x, .4, z), new THREE.Euler(), V(.075, .72, .075));
+  }
+  for (let i = 0; i < 12; i++) addTo(matWood, boxGeo, V(-3.5, .35, 1.12 + i * .15), new THREE.Euler(), V(.8, .045, .085));
+  for (const z of [1.03, 2.87]) {
+    addTo(matWood, boxGeo, V(-3.5, .7, z), new THREE.Euler(), V(.85, .07, .065));
+    for (let i = 0; i < 5; i++) addTo(matMarineRust, boxGeo, V(-3.79 + i * .145, .53, z), new THREE.Euler(), V(.023, .28, .023));
+  }
+  const padded = (w, h, d, r) => {
+    const g = new THREE.BoxGeometry(w, h, d, 8, 4, 16), p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const raw = V(p.getX(i), p.getY(i), p.getZ(i));
+      const core = V(THREE.MathUtils.clamp(raw.x, -w / 2 + r, w / 2 - r), THREE.MathUtils.clamp(raw.y, -h / 2 + r, h / 2 - r), THREE.MathUtils.clamp(raw.z, -d / 2 + r, d / 2 - r));
+      const v = raw.sub(core).normalize().multiplyScalar(r).add(core); p.setXYZ(i, v.x, v.y, v.z);
+    }
+    g.computeVertexNormals(); return g;
+  };
+  const mattress = padded(.84, .18, 1.78, .06), pillow = padded(.49, .145, .36, .065);
+  addTo(matCloth, mattress, V(-3.5, .45, 1.95));
+  addTo(matCloth, pillow, V(-3.55, .61, 1.3), new THREE.Euler(.04, -.16, -.035));
+  mattress.dispose(); pillow.dispose();
+  const bedding = (mat, w, d, x, y, z, phase, drape) => {
+    const g = new THREE.PlaneGeometry(w, d, 18, 26); g.rotateX(-Math.PI / 2);
+    const p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const px = p.getX(i), pz = p.getZ(i), edge = Math.max(0, px - .25);
+      p.setY(i, .018 * Math.sin(px * 26 + pz * 9 + phase) + .013 * Math.cos(pz * 23) - drape * edge * edge * 12);
+    }
+    g.computeVertexNormals(); addTo(mat, g, V(x, y, z), new THREE.Euler(0, .025, 0));
+    // Reverso separado dos milimetros: conserva el borde al mirar por debajo.
+    const back = g.clone(), ix = back.index;
+    for (let i = 0; i < ix.count; i += 3) { const a = ix.getX(i); ix.setX(i, ix.getX(i + 1)); ix.setX(i + 1, a); }
+    back.computeVertexNormals(); addTo(mat, back, V(x, y - .003, z), new THREE.Euler(0, .025, 0));
+    g.dispose(); back.dispose();
+  };
+  bedding(matCloth, .91, 1.73, -3.49, .552, 1.97, .4, .35);
+  bedding(matHouseWool, .91, 1.02, -3.45, .585, 2.25, 1.8, .7);
+  // Doblez grueso de la manta y flecos en el pie, sin cajas sobre el colchon.
+  for (let i = 0; i < 15; i++) addTo(matHouseWool, houseDripGeo, V(-3.82 + i * .052, .61 + .012 * Math.sin(i), 1.77), new THREE.Euler(), V(.037, .032, .065));
+  for (let i = 0; i < 17; i++) addTo(matHouseWool, boxGeo, V(-3.86 + i * .048, .55, 2.78), new THREE.Euler(.25, 0, 0), V(.005, .009, .06));
   inter([bed, blanket], 'Mirar el catre', () => think('Un catre deshecho. La almohada está húmeda… y huele a mar.'));
   // silla volcada junto al catre
   const ch = new THREE.Group(); ch.position.set(-2.4, 0.22, 1.7); ch.rotation.set(Math.PI / 2, 0.7, 0); scene.add(ch);
@@ -869,20 +1390,35 @@ inter(coat, 'Mirar el abrigo', () => think('Un abrigo de hule de muchacho. Te qu
   box(0.5, 0.05, 0.45, 0, -1.95, 0.53, 0.02, { m: cloth }).rotation.set(0.1, 0.4, 0.05);
   box(0.5, 0.45, 0.05, 0, -2.18, 0.35, 0.05, { m: cloth }).rotation.z = 0.15;
   // libros y papeles por el suelo, junto al estante y al escritorio
-  for (let i = 0; i < 6; i++) box(0.22, 0.05, 0.3, [0x5a2a22, 0x2a3a4a, 0x4a4a2a][i % 3], -2.5 + rnd(-0.15, 0.15), 0.03 + i * 0.05, -2.5).rotation.y = rnd(-0.5, 0.5);
+  for (let i = 0; i < 6; i++) {
+    const x = -2.5 + (hash2(i, 14) - .5) * .24, y = .08 + i * .05, ry = (hash2(i, 17) - .5) * .6;
+    addTo(matHouseWax, boxGeo, V(x, y, -2.5), new THREE.Euler(0, ry, 0), V(.21, .032, .29));
+    for (const dy of [-.021, .021]) addTo(matOilskin, boxGeo, V(x, y + dy, -2.5), new THREE.Euler(0, ry, 0), V(.24, .008, .32));
+  }
   box(0.4, 0.03, 0.28, 0xe0d6b8, -1.8, 0.03, -2.2).rotation.y = 0.7;                                           // libro abierto
-  for (let i = 0; i < 14; i++) addTo(paper, boxGeo, V(-3.0 + rnd(-0.8, 1.2), 0.055, -1.2 + rnd(-0.9, 1.4)), new THREE.Euler(0, rnd(0, 6), 0), V(0.22, 0.005, 0.3));
+  housePaper(-1.9, .06, -2.2, .18, .25, .7, 0, .008); housePaper(-1.71, .061, -2.32, .18, .25, .7, 1, .008);
+  for (let i = 0; i < 14; i++) housePaper(-3.0 + hash2(i, 12) * 2 - .8, .057, -1.2 + hash2(i, 19) * 2.3 - .9,
+    .2 + hash2(i, 3) * .07, .28 + hash2(i, 7) * .06, hash2(i, 5) * 6, i, i % 4 === 0 ? .065 : .015);
   // botellas vacías, una volcada, y un plato roto
   for (let i = 0; i < 4; i++) { const b = cyl(0.04, 0.045, 0.28, 0x2a3a2a, 1.4 + i * 0.18, 0.14, -2.75); if (i === 2) { b.rotation.z = Math.PI / 2; b.position.set(1.6, 0.05, -2.4); } }
   for (let i = 0; i < 4; i++) box(0.12, 0.015, 0.09, 0xd8d2c4, 0.4 + rnd(-0.3, 0.3), 0.06, 1.1 + rnd(-0.3, 0.3)).rotation.y = rnd(0, 6);
   // dos pares de botas junto a la puerta: unas son de tu número
   const boots = new THREE.Group(); scene.add(boots);
+  const bootShaft = new THREE.LatheGeometry([[.053, 0], [.07, .05], [.076, .27], [.082, .32], [.079, .33], [.066, .33], [.063, .27], [.055, .08]].map(p => new THREE.Vector2(...p)), 14);
   for (const [x, s2] of [[0.95, 1], [1.35, 0.85]]) for (const dz of [-0.1, 0.1]) {
-    box(0.13 * s2, 0.3 * s2, 0.13 * s2, 0, x + dz, 0.15 * s2 + 0.05, 2.75, { m: dark, parent: boots });
-    box(0.13 * s2, 0.08 * s2, 0.28 * s2, 0, x + dz, 0.09, 2.65, { m: dark, parent: boots });
+    const bx = x + dz;
+    houseUV(matBoots, bootShaft, V(bx, .13, 2.75), new THREE.Euler(0, 0, dz * .12), V(s2, s2, s2));
+    houseUV(matBoots, houseDripGeo, V(bx, .14, 2.69), new THREE.Euler(-.25, 0, 0), V(.074 * s2, .085 * s2, .105 * s2));
+    houseUV(matBoots, houseDripGeo, V(bx, .12, 2.58), new THREE.Euler(), V(.076 * s2, .056 * s2, .115 * s2));
+    addTo(dark, houseDripGeo, V(bx, .078, 2.65), new THREE.Euler(), V(.082 * s2, .022 * s2, .184 * s2));
+    addTo(dark, boxGeo, V(bx, .077, 2.76), new THREE.Euler(), V(.13 * s2, .04 * s2, .095 * s2));
+    for (let i = 0; i < 6; i++) addTo(dark, boxGeo, V(bx, .063, 2.51 + i * .052 * s2), new THREE.Euler(), V(.13 * s2, .012, .016));
+    // El interior de la cana queda oscuro y abierto bajo el borde enrollado.
+    addTo(dark, houseDripGeo, V(bx, .13 + .3 * s2, 2.75), new THREE.Euler(), V(.059 * s2, .005, .059 * s2));
+    houseUV(matBoots, new THREE.TorusGeometry(.074, .007, 5, 16), V(bx, .13 + .325 * s2, 2.75), new THREE.Euler(Math.PI / 2, 0, 0), V(s2, s2, s2));
+    const target = hitbox(.17 * s2, .43 * s2, .36 * s2, bx, .25, 2.66); boots.add(target);
   }
-  for (const dz of [-0.1, 0.1]) { const p = noRay(new THREE.Mesh(new THREE.CircleGeometry(0.16, 10), new THREE.MeshPhongMaterial({ color: 0x06080a, shininess: 80, specular: 0x777770, transparent: true, opacity: 0.85 })));
-    p.rotation.x = -Math.PI / 2; p.position.set(1.35 + dz, 0.057, 2.6); scene.add(p); }
+  bootShaft.dispose();
   inter(boots, 'Mirar las botas', () => think('Dos pares de botas. Las pequeñas son de tu número. Están empapadas.'));
   // espejo tapado con una sábana clavada al marco
   const mirror = new THREE.Group(); scene.add(mirror);
@@ -890,14 +1426,6 @@ inter(coat, 'Mirar el abrigo', () => think('Un abrigo de hule de muchacho. Te qu
   box(0.66, 0.98, 0.03, 0, -0.6, 1.7, -2.93, { m: matCloth, parent: mirror }).rotation.z = 0.03;
   for (const dx of [-0.28, 0.28]) sphere(0.015, 0x555555, -0.6 + dx, 2.18, -2.9, { parent: mirror });
   inter(mirror, 'Mirar el espejo', () => think('Alguien tapó el espejo con una sábana. La clavó al marco para que no se cayera.'));
-  // suelo mojado bajo el agujero del tejado
-  const mask = document.createElement('canvas'); mask.width = mask.height = 128; const mg = mask.getContext('2d');
-  for (let i = 0; i < 9; i++) { const x = 40 + Math.random() * 48, y = 40 + Math.random() * 48, gr = mg.createRadialGradient(x, y, 2, x, y, 30 + Math.random() * 20);
-    gr.addColorStop(0, 'rgba(255,255,255,0.9)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); mg.fillStyle = gr; mg.fillRect(0, 0, 128, 128); }
-  const wetTex = TEX.mojado.clone(); wetTex.repeat.set(0.9, 0.9); wetTex.needsUpdate = true;
-  const pd = noRay(new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.4), new THREE.MeshPhongMaterial({ map: wetTex, alphaMap: new THREE.CanvasTexture(mask),
-    transparent: true, depthWrite: false, shininess: 70, specular: 0x5a5a50, color: 0x9a948a })));
-  pd.rotation.x = -Math.PI / 2; pd.position.set(1.2, 0.057, 1.6); scene.add(pd);
   // trozos de yeso caídos a lo largo de las paredes
   for (let i = 0; i < 18; i++) {
     const side = i % 3, x = side === 0 ? rnd(-3.9, 3.9) : (side === 1 ? -3.95 : 3.95), z = side === 0 ? -2.95 : rnd(-2.8, 2.8);
@@ -923,21 +1451,60 @@ inter(coat, 'Mirar el abrigo', () => think('Un abrigo de hule de muchacho. Te qu
     gr.addColorStop(0, 'rgba(0,0,0,1)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return canvasTex(c); };
   const blob = new THREE.MeshBasicMaterial({ map: mk(true), transparent: true, depthWrite: false, opacity: 0.75 });
   const edge = new THREE.MeshBasicMaterial({ map: mk(false), transparent: true, depthWrite: false, opacity: 0.6 });
-  const shadow = (x, z, w, d, m = blob, ry = 0) => { const p = noRay(new THREE.Mesh(new THREE.PlaneGeometry(w, d), m)); p.rotation.set(-Math.PI / 2, 0, ry); p.position.set(x, 0.058, z); scene.add(p); };
-  for (const [x, z, w, d] of [[-0.6, 0, 2.6, 1.7], [-3.5, -2.0, 1.1, 1.9], [-3.5, 1.95, 1.3, 2.4], [3.4, -2.3, 1.3, 1.2], [3.55, 2.1, 1.1, 1.8], [-1.95, 0, 0.8, 0.8], [0.75, 0, 0.8, 0.8], [-2.2, -2.85, 1.9, 0.6]])
+  const shadow = (x, z, w, d, m = blob, ry = 0) => { const p = noRay(new THREE.Mesh(new THREE.PlaneGeometry(w, d), m)); p.rotation.set(-Math.PI / 2, 0, ry); p.position.set(x, Math.abs(z) > 3.3 ? (floorAt(x, z, 10)?.y ?? 0) + .008 : .058, z); scene.add(p); };
+  for (const [x, z, w, d] of [[-0.6, 0, 2.6, 1.7], [-3.5, -2.0, 1.1, 1.9], [-3.5, 1.95, 1.3, 2.4], [3.4, -2.3, 1.3, 1.2], [3.55, 2.1, 1.1, 1.8], [-1.95, 0, 0.8, 0.8], [0.75, 0, 0.8, 0.8], [-2.12, -2.75, 2.1, .85], [2.1, -2.75, 1.9, .85], [1.53, -2.12, 1.4, 1.35], [.43, -2.47, .95, .8], [3.7, .68, .95, 1.3], [-2.63, 2.63, 1.1, .85]])
     shadow(x, z, w, d);
   shadow(0, -2.82, 8.2, 0.6, edge, 0); shadow(0, 2.82, 8.2, 0.6, edge, Math.PI);          // base de las paredes
   shadow(-3.82, 0, 6.2, 0.6, edge, -Math.PI / 2); shadow(3.82, 0, 6.2, 0.6, edge, Math.PI / 2);
+  shadow(-3.38, 4.04, 1.45, 1.2); shadow(2.6, 4.15, 1, 1); shadow(2.12, 4.17, .7, .7);
 }
 // Mesa con cena para dos
 const tableTop = box(1.8, 0.06, 1.0, 0, -0.6, 0.79, 0, { collide: true, m: matWood });
 for (const [lx, lz] of [[-1.4, -0.4], [0.2, -0.4], [-1.4, 0.4], [0.2, 0.4]]) box(0.08, 0.76, 0.08, 0, lx, 0.38, lz, { m: matWood });
 box(1.6, 0.12, 0.03, 0, -0.6, 0.7, -0.43, { m: matWood }); box(1.6, 0.12, 0.03, 0, -0.6, 0.7, 0.43, { m: matWood });
 const plates = [];
-for (const px of [-1.15, -0.05]) {
-  plates.push(cyl(0.17, 0.15, 0.03, 0xd8d2c4, px, 0.84, 0));
-  plates.push(cyl(0.11, 0.11, 0.02, 0x6a4a2a, px, 0.86, 0));
-  plates.push(cyl(0.04, 0.035, 0.12, 0x9aa4a0, px, 0.88, -0.3));
+// Proyeccion cenital compartida: el atlas pintado sigue el relieve del plato y la comida.
+const matDinner = new THREE.MeshLambertMaterial({ map: tex('assets/cena-estofado.webp') });
+matDinner.customProgramCacheKey = () => 'house-dinner-projection-v1';
+matDinner.onBeforeCompile = sh => {
+  sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vDinnerWP;')
+    .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvDinnerWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+  sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vDinnerWP;')
+    .replace('#include <map_fragment>', `
+      float plateX = vDinnerWP.x < -0.6 ? -1.15 : -0.05;
+      vec2 dinnerUV = vec2((vDinnerWP.x - plateX) / .372 + .5, .5 - vDinnerWP.z / .372);
+      diffuseColor *= texture2D(map, clamp(dinnerUV, .01, .99));`);
+};
+{
+  const profile = [[0, 0], [.075, 0], [.12, .005], [.16, .043], [.176, .048], [.178, .054], [.17, .058], [.155, .053], [.12, .023], [.07, .012], [0, .012]];
+  const dish = new THREE.LatheGeometry(profile.map(p => new THREE.Vector2(...p)), 32);
+  const soup = new THREE.SphereGeometry(1, 24, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+  const cup = new THREE.LatheGeometry([[0, 0], [.035, 0], [.042, .015], [.047, .135], [.05, .142], [.049, .148], [.041, .148], [.039, .028], [0, .028]].map(p => new THREE.Vector2(...p)), 18);
+  const handle = new THREE.TorusGeometry(.036, .008, 6, 14);
+  for (const px of [-1.15, -0.05]) {
+    addTo(matDinner, dish, V(px, .824, 0));
+    addTo(matDinner, soup, V(px, .853, 0), new THREE.Euler(), V(.128, .01, .128));
+    // Pequenos bultos siguen la misma textura, sin un material por ingrediente.
+    for (let i = 0; i < 7; i++) {
+      const a = i * 2.4, r = .025 + hash2(i, px) * .065;
+      addTo(matDinner, houseDripGeo, V(px + Math.cos(a) * r, .859, Math.sin(a) * r),
+        new THREE.Euler(.1, a, .1), V(.016, .008, .021));
+    }
+    addTo(matHouseMetal, cup, V(px, .824, -.3));
+    addTo(matHouseMetal, handle, V(px + .068, .914, -.3));
+    addTo(matStove, houseDripGeo, V(px, .858, -.3), new THREE.Euler(), V(.038, .003, .038));
+    // Cuchara de peltre con cuenco hundido y mango ligeramente curvo.
+    addTo(matHouseMetal, houseDripGeo, V(px + .215, .834, -.1), new THREE.Euler(), V(.025, .008, .039));
+    addTo(matStove, houseDripGeo, V(px + .215, .84, -.1), new THREE.Euler(), V(.019, .002, .031));
+    addTo(matHouseMetal, boxGeo, V(px + .215, .832, .015), new THREE.Euler(0, 0, -.04), V(.012, .008, .17));
+    addTo(matHouseBread, houseDripGeo, V(px + .16, .856, .22), new THREE.Euler(.1, .5, .12), V(.086, .035, .052));
+    for (let i = 0; i < 9; i++) {
+      const x = px + .08 + hash2(i, px) * .16, z = .17 + hash2(px, i + 5) * .14;
+      addTo(matHouseBread, houseDripGeo, V(x, .827, z), new THREE.Euler(), V(.003 + hash2(i, z) * .003, .003, .004));
+    }
+    plates.push(hitbox(.38, .12, .38, px, .88, 0));
+  }
+  dish.dispose(); soup.dispose(); cup.dispose(); handle.dispose();
 }
 function chair(x, z, ry) {
   const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = ry; scene.add(g);
@@ -949,8 +1516,9 @@ function chair(x, z, ry) {
   return g;
 }
 chair(-1.95, 0, -Math.PI / 2); chair(0.75, 0, Math.PI / 2);
-cyl(0.03, 0.03, 0.16, 0xe8e0c8, -0.6, 0.9, 0.2);
-sphere(0.025, 0, -0.6, 1.0, 0.2, { m: new THREE.MeshBasicMaterial({ color: 0xffc070 }) });
+// Vela de la cena sobre un platillo de peltre.
+addTo(matHouseMetal, new THREE.CylinderGeometry(.07, .06, .012, 18), V(-.6, .83, .2));
+houseCandle(-.6, .837, .2, .16, .028);
 inter([tableTop, ...plates], 'Mirar la mesa', () => think('Cena servida para dos. La sopa todavía humea. Alguien te esperaba.'));
 
 // Escritorio + libro de registro
@@ -959,9 +1527,38 @@ box(0.66, 0.74, 0.5, 0, -3.5, 0.39, -2.45, { m: matWood });
 for (const y of [0.16, 0.39, 0.62]) { box(0.02, 0.18, 0.44, 0, -3.16, y, -2.45, { m: matWood }); sphere(0.018, 0x8a7a4a, -3.14, y, -2.45); }
 for (const z of [-1.35]) for (const x of [-3.8, -3.2]) box(0.05, 0.76, 0.05, 0, x, 0.38, z, { m: matWood });
 const book = new THREE.Group(); book.position.set(-3.45, 0.82, -2.0); scene.add(book);
-box(0.3, 0.03, 0.22, 0xe0d6b8, 0, 0, -0.11, { parent: book }).rotation.x = -0.05;
-box(0.3, 0.03, 0.22, 0xe0d6b8, 0, 0, 0.11, { parent: book }).rotation.x = 0.05;
-box(0.32, 0.02, 0.46, 0x5a1e1a, 0, -0.025, 0, { parent: book });
+const ledgerCanvas = document.createElement('canvas'); ledgerCanvas.width = ledgerCanvas.height = 512;
+const ledgerInkTex = canvasTex(ledgerCanvas); let ledgerImage = null, ledgerWritten = '';
+function drawLedgerInk(text = ledgerWritten) {
+  ledgerWritten = text; const g = ledgerCanvas.getContext('2d');
+  g.fillStyle = '#b9a783'; g.fillRect(0, 0, 512, 512);
+  if (ledgerImage) g.drawImage(ledgerImage, 0, 0, 512, 512);
+  g.fillStyle = '#28231c'; g.font = '13px "Homemade Apple", cursive';
+  const words = text.split(' '); let line = '', y = 326;
+  for (const word of words) {
+    if (g.measureText(line + word).width > 191) { g.fillText(line, 285, y); y += 29; line = ''; }
+    line += word + ' ';
+  }
+  g.fillText(line, 285, y); ledgerInkTex.needsUpdate = true;
+}
+drawLedgerInk();
+texLoader.load('assets/registro-farero-abierto.webp', t => { ledgerImage = t.image; drawLedgerInk(); t.dispose(); });
+{
+  propBatch(book, matWornLeather, [[boxGeo, V(0, -.006, 0), V(.34, .022, .48)], [new THREE.CylinderGeometry(.018, .018, .32, 10), V(0, .014, 0), V(1, 1, 1), new THREE.Euler(0, 0, Math.PI / 2)]]);
+  propBatch(book, matHouseWax, [-1, 1].map(s => [boxGeo, V(0, .01, s * .119), V(.3, .018, .214)]));
+  const pages = new THREE.PlaneGeometry(.3, .44, 12, 18); pages.rotateX(-Math.PI / 2);
+  const p = pages.attributes.position, uv = pages.attributes.uv;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), z = p.getZ(i); p.setY(i, .024 + .028 * Math.exp(-Math.abs(z) * 33) + .002 * Math.sin(x * 32));
+    uv.setXY(i, .5 - z / .44, .5 - x / .3);
+  }
+  pages.computeVertexNormals(); book.add(new THREE.Mesh(pages, new THREE.MeshLambertMaterial({ map: ledgerInkTex, side: THREE.DoubleSide })));
+  propBatch(book, matOldCoat, [[boxGeo, V(.06, .034, .19), V(.018, .003, .22), new THREE.Euler(0, .18, 0)]]);
+  propBatch(book, matHouseMetal, [[new THREE.CylinderGeometry(.039, .047, .065, 12), V(-.08, .04, -.39)], [new THREE.TorusGeometry(.025, .007, 5, 12), V(-.08, .077, -.39), V(1, 1, 1), new THREE.Euler(Math.PI / 2, 0, 0)]]);
+  propBatch(book, matDarkDetail, [[new THREE.CircleGeometry(.022, 12), V(-.08, .079, -.39), V(1, 1, 1), new THREE.Euler(-Math.PI / 2, 0, 0)]]);
+  const quill = new THREE.Group(); quill.position.set(-.08, .1, -.39); quill.rotation.z = -.3; book.add(quill);
+  propBatch(quill, matHouseWax, [[new THREE.SphereGeometry(1, 8, 6), V(0, .105, 0), V(.019, .115, .004)], [boxGeo, V(0, .06, 0), V(.003, .23, .003)]]);
+}
 inter([book, hitbox(0.7, 0.5, 1.0, -3.5, 1.0, -2.0)], () => S.phase === 'registro' ? 'Escribir en el registro' : 'Libro de registro', () => {
   if (S.phase === 'registro') writeLog();
   else if (S.wrote) think('Tu letra. La tinta todavía brilla.');
@@ -986,6 +1583,26 @@ for (const [dx, dz] of [[-0.33, -0.28], [0.33, -0.28], [-0.33, 0.28], [0.33, 0.2
 box(0.86, 0.05, 0.76, 0, 3.4, 0.92, -2.3, { parent: stove, m: matStove });
 cyl(0.09, 0.09, 2.2, 0, 3.6, 2.0, -2.4, { parent: stove, m: matStove });
 const stoveMouth = box(0.02, 0.3, 0.4, 0x0a0a0a, 2.99, 0.45, -2.3, { parent: stove });
+const stoveFire = new THREE.Group(); stoveFire.visible = false; stove.add(stoveFire);
+{
+  const fireMat = new THREE.MeshBasicMaterial({ map: tex('assets/llama-vela.webp'), transparent: true, depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
+  fireMat.customProgramCacheKey = () => 'stove-fire-v1';
+  fireMat.onBeforeCompile = sh => {
+    sh.uniforms.uFireTime = U.time;
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uFireTime;')
+      .replace('#include <begin_vertex>', 'vec3 transformed = vec3(position); transformed.y += uv.y * .012 * sin(uFireTime * 11.0 + position.z * 45.0);');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uFireTime;')
+      .replace('#include <alphamap_fragment>', '#include <alphamap_fragment>\ndiffuseColor.a *= .83 + .17 * sin(uFireTime * 9.0 + vMapUv.y * 12.0);');
+  };
+  propBatch(stoveFire, fireMat, [-1, 0, 1].map((s, i) => [new THREE.PlaneGeometry(.43, .38), V(2.971, .435 + i * .012, -2.3 + s * .105), V(1, 1, 1), new THREE.Euler(0, -Math.PI / 2, s * .08)]));
+  propBatch(stoveFire, new THREE.MeshBasicMaterial({ color: 0xb54212 }), Array.from({ length: 8 }, (_, i) => [new THREE.SphereGeometry(1, 7, 5), V(2.969, .327, -2.46 + i * .045), V(.012, .015 + (i % 3) * .004, .025)]));
+  propBatch(stove, matStove, [...[-.15, -.05, .05, .15].map(z => [boxGeo, V(2.953, .45, -2.3 + z), V(.022, .29, .012)]),
+    ...[.32, .58].map(y => [boxGeo, V(2.953, y, -2.3), V(.022, .018, .39)])]);
+  const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
+  const gr = g.createRadialGradient(32, 32, 1, 32, 32, 32); gr.addColorStop(0, '#fff'); gr.addColorStop(.4, 'rgba(255,255,255,.45)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  const spill = noRay(new THREE.Mesh(new THREE.PlaneGeometry(1.75, 1.2), new THREE.MeshBasicMaterial({ map: canvasTex(c), color: 0xff9b3d, transparent: true, opacity: .24, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })));
+  spill.rotation.x = -Math.PI / 2; spill.position.set(2.45, .061, -2.3); stoveFire.add(spill);
+}
 colliders.push({ minX: 3.0, maxX: 3.8, minZ: -2.65, maxZ: -1.95 });
 const stoveLight = new THREE.PointLight(0xff6a20, 0, 7, 1.4); stoveLight.position.set(2.7, 0.7, -2.3); scene.add(stoveLight);
 inter([stove, hitbox(1.0, 1.4, 0.9, 3.35, 0.7, -2.3)], () => S.phase === 'estufa' ? 'Encender la estufa' : 'Estufa', () => {
@@ -995,14 +1612,19 @@ inter([stove, hitbox(1.0, 1.4, 0.9, 3.35, 0.7, -2.3)], () => S.phase === 'estufa
 
 // Ventana este (cerca de la estufa) con vaho
 const WIN = new THREE.Vector3(3.98, 1.6, -0.6);
-const glass = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.0), dirtyGlass(false));
+const glass = new THREE.Mesh(houseGlassGeometry(1.2, 1.0, false), matOldGlass);
 glass.position.copy(WIN); glass.rotation.y = -Math.PI / 2; scene.add(glass);
-for (const [w, h, dy, dz] of [[0.08, 1.1, 0, -0.62], [0.08, 1.1, 0, 0.62], [1.32, 0.08, 0.52, 0], [1.32, 0.08, -0.52, 0], [0.04, 1.0, 0, 0]])
-  box(0.06, h, w, 0x2a2018, 3.96, WIN.y + dy, WIN.z + dz);
+houseWindowFrame(4.05, WIN.y, WIN.z, 1.2, 1.0, -Math.PI / 2);
 const fogCanvas = document.createElement('canvas'); fogCanvas.width = 512; fogCanvas.height = 420;
 const fogTex = canvasTex(fogCanvas);
 const fogPlane = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.0),
   new THREE.MeshBasicMaterial({ map: fogTex, transparent: true, opacity: 0, depthWrite: false }));
+fogPlane.material.customProgramCacheKey = () => 'window-condensation-v2';
+fogPlane.material.onBeforeCompile = sh => {
+  sh.uniforms.uCondensationTime = U.time;
+  sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uCondensationTime;')
+    .replace('#include <map_fragment>', '#include <map_fragment>\nfloat lane = pow(max(0.0, sin(vMapUv.x * 177.0)), 80.0); float drop = pow(max(0.0, sin((vMapUv.y + uCondensationTime * .035) * 93.0 + floor(vMapUv.x * 177.0) * .7)), 50.0); diffuseColor.a += .035 * lane * drop * smoothstep(.01, .04, diffuseColor.a);');
+};
 fogPlane.position.set(WIN.x - 0.02, WIN.y, WIN.z); fogPlane.rotation.y = -Math.PI / 2; scene.add(fogPlane);
 inter([glass, fogPlane], 'Mirar la ventana', () => think(S.fogReady
   ? '«NO SUBAS». Alguien lo escribió con el dedo… desde dentro.'
@@ -1023,80 +1645,172 @@ box(0.03, 1.8, 0.62, 0, 3.19, 1.0, 1.78, { m: matWood });
 const pDoor = box(0.03, 1.8, 0.62, 0, 0, 0, 0, { m: matWood }); pDoor.geometry.translate(0, 0, -0.31); pDoor.position.set(3.19, 1.0, 2.73); pDoor.rotation.y = -0.6;
 for (let i = 0; i < 6; i++) cyl(0.07, 0.07, 0.18, 0x6a4a2a, 3.45, 0.55 + (i % 3) * 0.6, 1.65 + Math.floor(i / 3) * 0.8);
 const page1 = box(0.24, 0.01, 0.3, 0xf0e8d0, 0.75, 0.51, 0, { m: lam(0xf0e8d0, { emissive: 0x2a2620 }) }); // sobre la silla
+{
+  page1.geometry.dispose(); page1.material.dispose();
+  page1.geometry = new THREE.PlaneGeometry(.24, .3, 4, 4); page1.geometry.rotateX(-Math.PI / 2); page1.material = matHousePapers;
+  const p = page1.geometry.attributes.position, uv = page1.geometry.attributes.uv;
+  for (let i = 0; i < p.count; i++) { p.setY(i, Math.max(0, p.getX(i) - .06) * .13); uv.setX(i, .002 + uv.getX(i) * .496); }
+  page1.geometry.computeVertexNormals();
+}
 const page1Hit = hitbox(0.5, 0.3, 0.5, 0.75, 0.6, 0);
 inter([page1, page1Hit], 'Coger el papel', () => takePage(1, page1, page1Hit));
 const trapPivot = new THREE.Group(); trapPivot.position.set(2.3, 0.06, 1.5); scene.add(trapPivot);   // bisagra en el borde del fondo
 const trap = new THREE.Group(); trap.position.set(0, 0, 0.5); trapPivot.add(trap);
-box(1.0, 0.04, 1.0, 0x2e2216, 0, 0, 0, { parent: trap });
-for (const dz of [-0.3, 0, 0.3]) box(1.0, 0.045, 0.03, 0x1a130c, 0, 0, dz, { parent: trap });
-const ring = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.012, 6, 16), lam(0x555555));
+box(1.0, 0.04, 1.0, 0, 0, 0, 0, { parent: trap, m: matMarinePlank });
+// Marco fijo sobre el canto del pozo; hoja y herrajes siguen el pivote original.
+for (const side of [-1, 1]) {
+  addTo(matMarinePlank, boxGeo, V(2.3 + side * .53, .064, 2), new THREE.Euler(), V(.07, .07, 1.13));
+  addTo(matMarinePlank, boxGeo, V(2.3, .064, 2 + side * .53), new THREE.Euler(), V(1.02, .07, .07));
+}
+{
+  const parts = [];
+  const piece = (geo, pos, scale = V(1, 1, 1), rot = new THREE.Euler()) => {
+    const g = geo.index ? geo.toNonIndexed() : geo.clone();
+    for (const key of Object.keys(g.attributes)) if (!['position', 'normal'].includes(key)) g.deleteAttribute(key);
+    g.applyMatrix4(new THREE.Matrix4().compose(pos, new THREE.Quaternion().setFromEuler(rot), scale)); parts.push(g);
+  };
+  for (const z of [-.32, .31]) {
+    piece(boxGeo, V(0, .027, z), V(.96, .025, .052));
+    for (const x of [-.43, -.23, .23, .43]) piece(houseDripGeo, V(x, .045, z), V(.014, .009, .014));
+  }
+  for (const x of [-.31, .31]) {
+    piece(boxGeo, V(x, .03, -.43), V(.13, .035, .2));
+    piece(new THREE.CylinderGeometry(.024, .024, .18, 10), V(x, .045, -.49), V(1, 1, 1), new THREE.Euler(0, 0, Math.PI / 2));
+    piece(houseDripGeo, V(x, .052, -.36), V(.016, .008, .016));
+  }
+  piece(boxGeo, V(.35, .03, 0), V(.15, .015, .13));
+  const hardware = new THREE.Mesh(mergeGeometries(parts), matMarineRust); trap.add(hardware); parts.forEach(g => g.dispose());
+}
+const ring = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.012, 6, 16), matMarineRust);
 ring.rotation.x = Math.PI / 2; ring.position.set(0.35, 0.03, 0); trap.add(ring);
 inter([trap, hitbox(1.2, 0.4, 1.2, 2.3, 0.2, 2.0)], () => S.phase === 'bajar' ? 'Bajar al sótano' : 'Trampilla', () => {
   if (S.phase === 'bajar') goDown();
   else think('Una trampilla en el suelo. De abajo sube un olor químico.');
 });
 
+// Las tres llamas comparten una textura y una sola llamada de dibujo.
+// Billboard y parpadeo en GPU: usa U.time sin otro bucle ni luces.
+{
+  const flameMat = new THREE.MeshBasicMaterial({ map: tex('assets/llama-vela.webp'), transparent: true,
+    depthWrite: false, side: THREE.DoubleSide, toneMapped: false, opacity: .86 });
+  flameMat.customProgramCacheKey = () => 'house-candle-billboard-v1';
+  flameMat.onBeforeCompile = sh => {
+    sh.uniforms.uHouseTime = U.time;
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uHouseTime;')
+      .replace('#include <project_vertex>', `
+        vec4 candleCenter = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        vec2 candleSize = vec2(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz));
+        float seed = instanceMatrix[3].x * 17.0 + instanceMatrix[3].z * 11.0;
+        float pulse = .96 + .04 * sin(uHouseTime * 9.0 + seed) + .025 * sin(uHouseTime * 17.0 + seed);
+        vec4 mvPosition = candleCenter + vec4(position.x * candleSize.x * pulse + position.y * .002 * sin(uHouseTime * 7.0 + seed),
+          position.y * candleSize.y * pulse, 0.0, 0.0);
+        gl_Position = projectionMatrix * mvPosition;`);
+  };
+  const flames = noRay(new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), flameMat, houseFlames.length));
+  const matrix = new THREE.Matrix4(), q = new THREE.Quaternion();
+  houseFlames.forEach((p, i) => flames.setMatrixAt(i, matrix.compose(p, q, V(.1, .09, 1))));
+  flames.instanceMatrix.needsUpdate = true; flames.computeBoundingBox(); flames.computeBoundingSphere(); scene.add(flames);
+  flushBatches();
+  houseWaxGeo.dispose(); houseDripGeo.dispose();
+  for (const [mat, list] of houseUVBatches) {
+    scene.add(noRay(new THREE.Mesh(mergeGeometries(list), mat))); list.forEach(g => g.dispose());
+  }
+  houseUVBatches.clear(); houseSpineGeo.dispose();
+}
+
 // ---------- Laboratorio (sótano, en x≈100) ----------
 // Bóveda de piedra húmeda: arcos, cadenas, un tanque con agua de mar, la mesa de química y la escalera de bajada.
 const LAB = { minX: 96.4, maxX: 103.6, minZ: -3.6, maxZ: 3.4 }, LAB_H = 3.1;
+const labStoneTex = tex('assets/piedra-sotano-humeda.webp');
+const matLabStone = triMat({ side: labStoneTex, top: labStoneTex, scale: .61, color: 0xafa99a });
+const matLabFloor = triMat({ side: labStoneTex, top: labStoneTex, scale: .49, color: 0x858279 });
+const matLabSkin = new THREE.MeshPhongMaterial({ map: tex('assets/piel-cadaver-costuras.webp'), color: 0xb5c9c0, emissive: 0x101814, emissiveIntensity: .15, shininess: 13, specular: 0x333e38 });
+const matCorpseFace = new THREE.MeshPhongMaterial({ map: tex('assets/cadaver-rostro-ceroso.webp'), color: 0xc5d0c7, shininess: 12, specular: 0x303a34 });
+const matLabLinen = new THREE.MeshLambertMaterial({ map: tex('assets/sabana-laboratorio.webp'), color: 0xc7d3d0, side: THREE.DoubleSide });
+matLabLinen.customProgramCacheKey = () => 'lab-linen-neutral-v1';
+matLabLinen.onBeforeCompile = sh => { sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', '#include <map_fragment>\nfloat linenGrey = dot(diffuseColor.rgb, vec3(.2126,.7152,.0722)); diffuseColor.rgb = mix(vec3(linenGrey), diffuseColor.rgb, .3);'); };
 floorBox(96, 104, -4, 4, 0, 'sotano');
-box(8.2, 0.1, 8.2, 0, 100, -0.05, 0, { m: matMason });
-box(8.4, 0.2, 8.4, 0, 100, LAB_H + 0.1, 0, { m: matStoneW });
-box(8.4, LAB_H, 0.3, 0, 100, LAB_H / 2, -4.05, { m: matStoneW }); box(8.4, LAB_H, 0.3, 0, 100, LAB_H / 2, 4.05, { m: matStoneW });
-box(0.3, LAB_H, 8.4, 0, 95.95, LAB_H / 2, 0, { m: matStoneW }); box(0.3, LAB_H, 8.4, 0, 104.05, LAB_H / 2, 0, { m: matStoneW });
+addTo(matLabFloor, boxGeo, V(100, -.05, 0), new THREE.Euler(), V(8.2, .1, 8.2));
+// Techo con hueco real para la escalera de mano (x 102.6..103.6, z 2.35..3.35).
+for (const [w, d, x, z] of [[6.8, 8.4, 99.2, 0], [.6, 8.4, 103.9, 0], [1, 6.55, 103.1, -.925], [1, .85, 103.1, 3.775]])
+  addTo(matLabStone, boxGeo, V(x, LAB_H + .1, z), new THREE.Euler(), V(w, .2, d));
+for (const z of [-4.05, 4.05]) addTo(matLabStone, boxGeo, V(100, LAB_H / 2, z), new THREE.Euler(), V(8.4, LAB_H, .3));
+for (const x of [95.95, 104.05]) addTo(matLabStone, boxGeo, V(x, LAB_H / 2, 0), new THREE.Euler(), V(.3, LAB_H, 8.4));
 { // arcos de piedra que sostienen la bóveda
   const sh = new THREE.Shape(); sh.moveTo(-4, 0); sh.lineTo(-4, LAB_H); sh.lineTo(4, LAB_H); sh.lineTo(4, 0); sh.lineTo(3.6, 0);
   sh.absellipse(0, 0.9, 3.6, 2.0, 0, Math.PI, false); sh.lineTo(-4, 0);
   const g = new THREE.ExtrudeGeometry(sh, { depth: 0.35, bevelEnabled: false, curveSegments: 14 });
-  for (const z of [-1.9, 1.7]) addTo(matStoneW, g, V(100, 0, z), new THREE.Euler());
+  for (const z of [-1.9, 1.7]) addTo(matLabStone, g, V(100, 0, z), new THREE.Euler());
   for (let i = 0; i < 26; i++) addTo(matRocks, rockGeos[i % 6], V(rnd(96.2, 103.8), 0.02, i % 2 ? rnd(-3.9, -3.6) : rnd(3.6, 3.9)),
     new THREE.Euler(rnd(0, 3), rnd(0, 6), 0), V(rnd(0.1, 0.25), rnd(0.06, 0.15), rnd(0.1, 0.25)));   // cascotes
   flushBatches();
 }
-// Escalera de piedra por la que se baja (pegada a la pared este)
-const LAB_STAIRS = { x: 103.1, z0: 3.75, z1: 1.15, steps: 8 };
-for (let i = 0; i < LAB_STAIRS.steps; i++) {
-  const t = (i + 0.5) / LAB_STAIRS.steps, top = LAB_H * (1 - (i + 1) / LAB_STAIRS.steps) + 0.02;
-  box(1.0, top + 0.1, 0.33, 0, LAB_STAIRS.x, (top - 0.1) / 2, LAB_STAIRS.z1 + (LAB_STAIRS.z0 - LAB_STAIRS.z1) * (1 - t), { m: matMason });
-}
-box(1.1, 0.05, 1.0, 0, LAB_STAIRS.x, LAB_H + 0.25, 3.5, { m: lam(0x050505) });            // hueco de arriba
-colliders.push({ minX: 102.55, maxX: 103.7, minZ: 1.1, maxZ: 3.9 });
+// Continuacion vertical del mismo pozo, en la zona separada del laboratorio.
+const LAB_LADDER = { x: 103.1, z: 2.85, railZ: 3.18, transferY: 1.55 };
+// Cuatro paredes, sin la tapa inferior de BoxGeometry que obstruia el hueco.
+for (const x of [102.56, 103.64]) addTo(matLabStone, boxGeo, V(x, 4.05, 2.85), new THREE.Euler(), V(.08, 1.9, 1.16));
+for (const z of [2.31, 3.39]) addTo(matLabStone, boxGeo, V(103.1, 4.05, z), new THREE.Euler(), V(1, 1.9, .08));
+for (const dx of [-.28, .28]) addTo(matWood, boxGeo, V(LAB_LADDER.x + dx, 1.65, LAB_LADDER.railZ), new THREE.Euler(), V(.065, 3.3, .075));
+for (let i = 0; i < 11; i++) addTo(matWood, boxGeo, V(LAB_LADDER.x, .14 + i * .29, LAB_LADDER.railZ), new THREE.Euler(), V(.58, .055, .08));
+for (const y of [.6, 2.1, 2.95]) for (const dx of [-.28, .28]) addTo(matMarineRust, boxGeo, V(LAB_LADDER.x + dx, y, 3.55), new THREE.Euler(), V(.08, .045, .82));
+colliders.push({ minX: 102.75, maxX: 103.45, minZ: 3.16, maxZ: 3.95 });
 // Estantería de frascos verdes
-box(0.5, 2.1, 3.4, 0x2e2216, 96.5, 1.05, 0.2, { collide: true });
-for (const y of [0.35, 0.95, 1.55, 2.08]) box(0.52, 0.04, 3.4, 0x241a12, 96.55, y, 0.2);
+colliders.push({ minX: 96.25, maxX: 96.75, minZ: -1.5, maxZ: 1.9 });
+addTo(matWood, boxGeo, V(96.3, 1.06, .2), new THREE.Euler(), V(.065, 2.13, 3.6));
+for (const z of [-1.6, 2.0]) addTo(matWood, boxGeo, V(96.63, 1.06, z), new THREE.Euler(), V(.78, 2.13, .07));
+for (const y of [.35, .95, 1.55, 2.08]) addTo(matWood, boxGeo, V(96.63, y, .2), new THREE.Euler(), V(.78, .055, 3.6));
 const jars = [];
-const glowMat = new THREE.MeshBasicMaterial({ color: 0x5cff8f });
-for (let i = 0; i < 24; i++) {
-  const j = cyl(0.07, 0.07, 0.2 + Math.random() * 0.12, 0, 96.85, 0.5 + (i % 3) * 0.6, -1.3 + Math.floor(i / 3) * 0.45,
-    { m: Math.random() < 0.7 ? glowMat : lam(0x2a4a33) });
-  jars.push(j);
+const glowMat = new THREE.MeshBasicMaterial({ color: 0x417553 });
+const matLabPaper = new THREE.MeshBasicMaterial({ map: matHousePapers.map, color: 0xa99c7f, side: THREE.DoubleSide });
+{
+  const root = new THREE.Group(); root.position.x = 96.85; scene.add(root); jars.push(root);
+  const jarGlass = new THREE.MeshPhongMaterial({ color: 0xa1b3a1, transparent: true, opacity: .22, shininess: 45, depthWrite: false });
+  const glass = [], caps = [], labels = [], fluid = [], darkFluid = [];
+  const jar = new THREE.LatheGeometry([[0, 0], [.062, 0], [.075, .04], [.075, .67], [.037, .79], [.032, .94], [.038, .97], [.038, 1], [.027, 1], [.026, .82], [.06, .66], [.06, .05], [0, .05]].map(p => new THREE.Vector2(...p)), 12);
+  const label = new THREE.PlaneGeometry(.055, .055);
+  for (let i = 0; i < label.attributes.uv.count; i++) label.attributes.uv.setX(i, .01 + label.attributes.uv.getX(i) * .48);
+  for (let i = 0; i < 24; i++) {
+    const y = .38 + (i % 3) * .6, z = -1.3 + Math.floor(i / 3) * .45, h = .22 + hash2(i, 8) * .09;
+    glass.push([jar, V(0, y, z), V(1, h, 1)]);
+    caps.push([new THREE.CylinderGeometry(.035, .034, .025, 10), V(0, y + h + .012, z)]);
+    labels.push([label, V(.076, y + h * .45, z), V(1, 1, 1), new THREE.Euler(0, Math.PI / 2, 0)]);
+    (i % 3 ? fluid : darkFluid).push([new THREE.CylinderGeometry(.059, .059, 1, 10), V(0, y + h * .32, z), V(1, h * .61, 1)]);
+  }
+  propBatch(root, jarGlass, glass); propBatch(root, matMarineRust, caps); propBatch(root, matLabPaper, labels);
+  propBatch(root, glowMat, fluid); propBatch(root, matDarkDetail, darkFluid); jar.dispose(); label.dispose();
 }
 inter(jars, 'Mirar los frascos', () => think('Brillan solos. El líquido se mueve, aunque nadie toque el estante.'));
-const labGreen = [new THREE.PointLight(0x3cff7a, 6, 9, 1.3), new THREE.PointLight(0x3cff7a, 5, 8, 1.3)];
+const labGreen = [new THREE.PointLight(0x3cff7a, 2.1, 9, 1.3), new THREE.PointLight(0x3cff7a, 1.6, 8, 1.3)];
 labGreen[0].position.set(97.3, 1.5, -0.6); labGreen[1].position.set(98.3, 1.4, -2.6); labGreen.forEach((l) => scene.add(l));
-const bulb = new THREE.PointLight(0xd8e0c8, 2.5, 9, 1.3); bulb.position.set(100.5, 2.3, 0.4); scene.add(bulb);
-cyl(0.005, 0.005, 0.7, 0x111111, 100.5, 2.75, 0.4);
-sphere(0.06, 0, 100.5, 2.35, 0.4, { m: new THREE.MeshBasicMaterial({ color: 0xf0f0d0 }) });
+const bulb = new THREE.PointLight(0xc4cdd5, 2.8, 9, 1.3); bulb.position.set(100.5, 2.3, 0.4); scene.add(bulb);
+addTo(matMarineRust, new THREE.CylinderGeometry(.009, .009, .69, 8), V(100.5, 2.77, .4));
+addTo(matMarineRust, new THREE.CylinderGeometry(.06, .1, .08, 12), V(100.5, 2.44, .4));
+sphere(.06, 0, 100.5, 2.35, .4, { m: new THREE.MeshBasicMaterial({ color: 0xd8c4a3 }) });
 // Tanque de agua de mar con algo dentro
 {
-  box(1.5, 0.15, 1.05, 0x1e1f1f, 97.7, 0.08, -2.75);
-  const water = box(1.4, 1.0, 0.95, 0, 97.7, 0.66, -2.75, { m: new THREE.MeshLambertMaterial({ color: 0x2f6a4a, transparent: true, opacity: 0.55, emissive: 0x0c2a18 }), collide: true });
-  for (const [dx, dz] of [[-0.72, -0.5], [0.72, -0.5], [-0.72, 0.5], [0.72, 0.5]]) box(0.05, 1.2, 0.05, 0x1e1f1f, 97.7 + dx, 0.7, -2.75 + dz);
+  box(1.5, 0.15, 1.05, 0, 97.7, 0.08, -2.75, { m: matMarineRust });
+  const water = box(1.4, 1.0, 0.95, 0, 97.7, 0.66, -2.75, { m: new THREE.MeshLambertMaterial({ color: 0x344f40, transparent: true, opacity: .24, emissive: 0x07130b }), collide: true });
+  for (const [dx, dz] of [[-0.72, -0.5], [0.72, -0.5], [-0.72, 0.5], [0.72, 0.5]]) addTo(matMarineRust, boxGeo, V(97.7 + dx, .7, -2.75 + dz), new THREE.Euler(), V(.055, 1.2, .055));
+  for (const y of [.2, 1.19]) for (const z of [-3.25, -2.25]) addTo(matMarineRust, boxGeo, V(97.7, y, z), new THREE.Euler(), V(1.5, .065, .055));
+  const tankGlass = new THREE.Mesh(new THREE.BoxGeometry(1.42, 1.04, .98), new THREE.MeshPhongMaterial({ map: matOldGlass.map, color: 0x80978d, transparent: true, opacity: .32, depthWrite: false, shininess: 50 }));
+  tankGlass.position.set(97.7, .68, -2.75); scene.add(tankGlass);
   const hand = new THREE.Group(); hand.position.set(97.95, 0.75, -2.3); hand.rotation.set(0.2, 0.3, 0.9); scene.add(hand);
-  box(0.14, 0.22, 0.05, 0, 0, 0, 0, { m: lam(0xb8c4b6), parent: hand });
-  for (let f = 0; f < 4; f++) box(0.025, 0.14, 0.03, 0, -0.05 + f * 0.033, 0.17, 0, { m: lam(0xb8c4b6), parent: hand }).rotation.z = (f - 1.5) * 0.08;
-  inter([water], 'Mirar el tanque', () => think('Agua de mar. Una mano pegada al cristal, con los dedos arrugados… como si empujara.'));
+  const ball = new THREE.SphereGeometry(1, 12, 9), finger = new THREE.CapsuleGeometry(1, 2, 4, 8);
+  propBatch(hand, matLabSkin, [[ball, V(0, 0, 0), V(.075, .11, .024)], ...Array.from({ length: 4 }, (_, i) => [finger, V(-.052 + i * .034, .15, 0), V(.013, .037, .013), new THREE.Euler(0, 0, (i - 1.5) * -.09)]),
+    [finger, V(.084, .018, 0), V(.017, .03, .017), new THREE.Euler(0, 0, -.6)]]); ball.dispose(); finger.dispose();
+  inter([water, tankGlass], 'Mirar el tanque', () => think('Agua de mar. Una mano pegada al cristal, con los dedos arrugados… como si empujara.'));
   S.tankHand = hand;
 }
 // Cadenas y ganchos colgando del arco central
 for (const [x, z, n] of [[99.2, 0.9, 9], [99.7, 1.2, 6], [101.6, -1.9, 8]]) {
-  for (let i = 0; i < n; i++) { const l = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.009, 4, 8), matIron); l.position.set(x, LAB_H - 0.05 - i * 0.065, z); l.rotation.y = i % 2 ? Math.PI / 2 : 0; scene.add(noRay(l)); }
-  const hook = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.012, 5, 10, Math.PI * 1.3), matIron); hook.position.set(x, LAB_H - 0.1 - n * 0.065, z); scene.add(noRay(hook));
+  for (let i = 0; i < n; i++) addTo(matMarineRust, new THREE.TorusGeometry(.035, .009, 4, 8), V(x, LAB_H - .05 - i * .065, z), new THREE.Euler(0, i % 2 ? Math.PI / 2 : 0, 0));
+  addTo(matMarineRust, new THREE.TorusGeometry(.06, .012, 5, 10, Math.PI * 1.3), V(x, LAB_H - .1 - n * .065, z));
 }
 // Mesa de química a lo largo de la pared norte (la página 2 está encima)
 {
-  box(4.3, 0.06, 0.75, 0x3d2c1e, 99.2, 0.76, 3.05, { collide: true });
-  for (const x of [97.15, 101.25]) for (const z of [2.75, 3.35]) box(0.06, 0.74, 0.06, 0x2a1d14, x, 0.37, z);
+  box(4.3, 0.06, 0.75, 0, 99.2, 0.76, 3.05, { collide: true, m: matWood });
+  for (const x of [97.15, 101.25]) for (const z of [2.75, 3.35]) addTo(matWood, boxGeo, V(x, .37, z), new THREE.Euler(), V(.07, .74, .07));
+  for (const z of [2.72, 3.38]) addTo(matMarineRust, boxGeo, V(99.2, .73, z), new THREE.Euler(), V(4.3, .07, .03));
   const glassG = new THREE.MeshLambertMaterial({ color: 0x9ab0a0, transparent: true, opacity: 0.35 });
   for (const [x, r, h, fill] of [[99.0, 0.12, 0.25, 1], [99.4, 0.07, 0.3, 0], [100.6, 0.09, 0.22, 1], [100.9, 0.05, 0.35, 1]]) {
     cyl(r, r * 1.2, h, 0, x, 0.79 + h / 2, 3.1, { m: glassG });
@@ -1117,7 +1831,12 @@ for (const [x, z, n] of [[99.2, 0.9, 9], [99.7, 1.2, 6], [101.6, -1.9, 8]]) {
 }
 // Bandeja de instrumental y gotero junto a la camilla
 {
-  box(0.5, 0.03, 0.35, 0x8a8e8a, 101.8, 0.95, 0.2); cyl(0.015, 0.015, 0.95, 0x6a6e6a, 101.8, 0.47, 0.2);
+  for (const y of [.23, .95]) addTo(matMarineRust, boxGeo, V(101.8, y, .2), new THREE.Euler(), V(.56, .035, .4));
+  for (const x of [101.57, 102.03]) for (const z of [.04, .36]) {
+    addTo(matMarineRust, new THREE.CylinderGeometry(.018, .018, .88, 8), V(x, .51, z));
+    addTo(matDarkDetail, new THREE.TorusGeometry(.05, .016, 6, 12), V(x, .065, z), new THREE.Euler(0, Math.PI / 2, 0));
+  }
+  for (const z of [.0, .4]) addTo(matMarineRust, boxGeo, V(101.8, .985, z), new THREE.Euler(), V(.56, .045, .018));
   for (let i = 0; i < 4; i++) box(0.02, 0.01, 0.18, 0xb0b4b0, 101.65 + i * 0.09, 0.975, 0.2).rotation.y = rnd(-0.2, 0.2);
   const syringe = cyl(0.015, 0.015, 0.16, 0, 101.95, 0.98, 0.12, { m: glowMat }); syringe.rotation.z = Math.PI / 2;
   cyl(0.012, 0.012, 1.8, 0x5a5e5a, 99.3, 0.9, -1.25);
@@ -1126,8 +1845,9 @@ for (const [x, z, n] of [[99.2, 0.9, 9], [99.7, 1.2, 6], [101.6, -1.9, 8]]) {
 // Lámpara verde de prueba sobre trípode, apuntando a la camilla
 {
   for (let i = 0; i < 3; i++) { const a = i * 2.1; const leg = cyl(0.015, 0.015, 1.4, 0x1e1f1f, 100.9 + Math.cos(a) * 0.2, 0.65, -2.9 + Math.sin(a) * 0.2); leg.rotation.set(Math.sin(a) * 0.15, 0, -Math.cos(a) * 0.15); }
-  const lampHead = cyl(0.1, 0.16, 0.3, 0x1e1f1f, 100.9, 1.45, -2.9); lampHead.rotation.set(-0.9, 0, 0.3);
-  sphere(0.09, 0, 100.85, 1.5, -2.75, { m: glowMat });
+  const lampHead = new THREE.Group(); lampHead.position.set(100.9, 1.45, -2.9); lampHead.rotation.set(-.9, 0, .3); scene.add(lampHead);
+  propBatch(lampHead, matMarineRust, [[new THREE.CylinderGeometry(.1, .16, .3, 14), V(0, 0, 0)]]);
+  propBatch(lampHead, glowMat, [[new THREE.CircleGeometry(.125, 18), V(0, -.155, 0), V(1, 1, 1), new THREE.Euler(Math.PI / 2, 0, 0)]]);
 }
 // Charcos y desagüe en el centro
 {
@@ -1141,26 +1861,58 @@ for (const [x, z, n] of [[99.2, 0.9, 9], [99.7, 1.2, 6], [101.6, -1.9, 8]]) {
 
 // Camilla con cuerpo (cabeza hacia -x)
 const STR = new THREE.Vector3(100.4, 0, -0.6);
-box(2.1, 0.08, 0.75, 0x6a6e6a, STR.x, 0.8, STR.z, { collide: true });
-for (const [dx, dz] of [[-0.95, -0.3], [0.95, -0.3], [-0.95, 0.3], [0.95, 0.3]]) cyl(0.025, 0.025, 0.8, 0x4a4e4a, STR.x + dx, 0.4, STR.z + dz);
-const skin = lam(0x8fa399), sheetMat = lam(0xd8d8cc);
+box(2.1, 0.08, 0.75, 0, STR.x, 0.8, STR.z, { collide: true, m: matMarineRust });
+for (const [dx, dz] of [[-0.95, -0.3], [0.95, -0.3], [-0.95, 0.3], [0.95, 0.3]]) addTo(matMarineRust, new THREE.CylinderGeometry(.025, .025, .8, 8), V(STR.x + dx, .4, STR.z + dz));
+for (const dz of [-.34, .34]) addTo(matMarineRust, boxGeo, V(STR.x, .6, STR.z + dz), new THREE.Euler(), V(1.9, .025, .025));
+const skin = matLabSkin, sheetMat = matLabLinen;
 const corpse = new THREE.Group(); scene.add(corpse);
-box(0.95, 0.22, 0.5, 0, STR.x + 0.5, 0.95, STR.z, { m: sheetMat, parent: corpse });       // piernas tapadas
 const torso = new THREE.Group(); torso.position.set(STR.x + 0.05, 0.92, STR.z); corpse.add(torso);
-box(0.75, 0.2, 0.45, 0, -0.38, 0.02, 0, { m: skin, parent: torso });
 const head = new THREE.Group(); head.position.set(-0.92, 0.04, 0); torso.add(head);
-sphere(0.15, 0, 0, 0, 0, { m: skin, parent: head });
-sphere(0.025, 0x050505, -0.05, 0.13, 0.06, { parent: head }); sphere(0.025, 0x050505, -0.05, 0.13, -0.06, { parent: head });
-box(0.08, 0.01, 0.12, 0x3a1a1a, -0.1, 0.1, 0, { parent: head }).rotation.z = -0.6;             // costura
-const sheet = box(1.15, 0.06, 0.62, 0, -0.5, 0.17, 0, { m: sheetMat, parent: torso });
+const corpseBall = new THREE.SphereGeometry(1, 20, 14), corpseLimb = new THREE.CapsuleGeometry(1, 2, 4, 12);
+const ribcage = new THREE.SphereGeometry(1, 28, 24), rp = ribcage.attributes.position;
+for (let i = 0; i < rp.count; i++) {
+  const x = -.37 + rp.getX(i) * .36, y = rp.getY(i), z = rp.getZ(i) * .2;
+  const waist = 1 - .22 * Math.exp(-Math.pow((x + .09) * 8, 2));
+  rp.setXYZ(i, x, .025 + y * .105 + Math.max(0, y) * .012 * Math.sin((x + .6) * 65) * Math.abs(z) / .2, z * waist);
+}
+ribcage.computeVertexNormals();
+propBatch(torso, skin, [[ribcage], ...[-1, 1].flatMap(s => [[corpseLimb, V(-.43, -.025, s * .235), V(.037, .12, .037), new THREE.Euler(0, 0, Math.PI / 2)],
+  [corpseLimb, V(-.12, -.055, s * .24), V(.028, .09, .028), new THREE.Euler(0, 0, Math.PI / 2)], [corpseBall, V(.065, -.055, s * .24), V(.065, .019, .038)],
+  ...Array.from({ length: 4 }, (_, i) => [corpseLimb, V(.125, -.055, s * .24 + (i - 1.5) * .018), V(.006, .022, .006), new THREE.Euler(0, 0, Math.PI / 2)]),
+  [new THREE.TubeGeometry(new THREE.CatmullRomCurve3([V(-.71, .04, s * .035), V(-.62, .112, s * .12), V(-.57, .06, s * .2)]), 10, .008, 5, false)]])]);
+ribcage.dispose();
+const skull = new THREE.SphereGeometry(1, 32, 24), sp = skull.attributes.position, su = skull.attributes.uv;
+for (let i = 0; i < sp.count; i++) {
+  const x = sp.getX(i), y = sp.getY(i), z = sp.getZ(i), jaw = y < -.15 ? .75 + .25 * (y + 1) / .85 : 1;
+  su.setXY(i, .5 + x * .46, .5 + y * .48); sp.setXYZ(i, -.02 - y * .165, z * .113, -x * .126 * jaw);
+}
+skull.computeVertexNormals(); propBatch(head, matCorpseFace, [[skull]]); skull.dispose(); head.rotation.x = .14;
+propBatch(head, skin, [[corpseBall, V(.17, -.018, 0), V(.09, .053, .062)], [corpseBall, V(.005, .122, 0), V(.029, .025, .022)], ...[-1, 1].map(s => [corpseBall, V(-.01, .005, s * .124), V(.03, .04, .014)])]);
+propBatch(torso, lam(0x454e45), Array.from({ length: 7 }, (_, i) => { const x = -.57 + i * .055, y = .03 + .105 * Math.sqrt(Math.max(0, 1 - Math.pow((x + .37) / .36, 2))); return [boxGeo, V(x, y, 0), V(.004, .003, .027), new THREE.Euler(.1, 0, 0)]; }));
+propBatch(corpse, skin, [[corpseBall, V(STR.x + .3, .92, STR.z), V(.28, .105, .19)], ...[-1, 1].flatMap(s => [
+  [corpseLimb, V(STR.x + .57, .91, STR.z + s * .105), V(.075, .13, .075), new THREE.Euler(0, 0, Math.PI / 2)],
+  [corpseBall, V(STR.x + .91, .91, STR.z + s * .105), V(.12, .06, .068)]])]);
+function corpseDrape(w, d, lower = false) {
+  const g = new THREE.PlaneGeometry(w, d, 26, 16); g.rotateX(-Math.PI / 2); const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), z = p.getZ(i);
+    p.setY(i, (lower ? .025 * Math.exp(-Math.pow((x + .3) * 4, 2)) - .028 * Math.exp(-z * z * 330) : .012) + .006 * Math.sin(x * 39 + z * 13) - Math.max(0, Math.abs(z) - .14) * .9);
+  }
+  g.computeVertexNormals(); return g;
+}
+const legsCloth = new THREE.Mesh(corpseDrape(1.06, .59, true), sheetMat); legsCloth.position.set(STR.x + .52, .995, STR.z); corpse.add(legsCloth);
+const sheet = new THREE.Mesh(corpseDrape(.3, .49), sheetMat); sheet.position.set(.08, .11, 0); torso.add(sheet);
+corpseBall.dispose(); corpseLimb.dispose();
 inter(corpse, 'Mirar la camilla', () => think(S.scared
   ? 'Está sentado. No te mira a ti: mira hacia arriba… hacia la luz.'
   : 'Alguien bajo la sábana. Huele a mar.'));
 
 // Notas en la pared + mesita con la página 2
 const notes = new THREE.Group(); scene.add(notes);
-for (const [dx, dy, r] of [[-0.35, 0.1, 0.05], [0.15, 0.2, -0.04], [0.55, -0.05, 0.08], [0.05, -0.35, 0]])
-  box(0.32, 0.4, 0.01, 0xd8ccae, 98.8 + dx, 1.6 + dy, -3.88, { parent: notes }).rotation.z = r;
+for (const [dx, dy, r] of [[-0.35, 0.1, 0.05], [0.15, 0.2, -0.04], [0.55, -0.05, 0.08], [0.05, -0.35, 0]]) {
+  const n = box(.32, .4, .01, 0, 98.8 + dx, 1.6 + dy, -3.88, { parent: notes }); n.rotation.z = r; n.material = matLabPaper;
+  sphere(.014, 0, 98.8 + dx, 1.77 + dy, -3.858, { m: matMarineRust, parent: notes });
+}
 const sketchCanvas = makeSketch();
 inter([notes, hitbox(1.4, 1.0, 0.2, 98.9, 1.6, -3.8)], 'Leer las notas', () => openReader(`<h2>Notas — «Sujeto 2»</h2>
   <p class="hand">Una dosis reanima. La luz sostiene. Sin la luz verde, vuelven a caer.</p>
@@ -1168,22 +1920,24 @@ inter([notes, hitbox(1.4, 1.0, 0.2, 98.9, 1.6, -3.8)], 'Leer las notas', () => o
   <p class="hand">Luz quieta: los del fondo despiertan y suben. Luz que gira deprisa: se quedan quietos donde estén.</p>
   <img src="${sketchCanvas.toDataURL()}">`));
 const page2 = box(0.24, 0.01, 0.3, 0, 98.2, 0.8, 3.0, { m: lam(0xf0e8d0, { emissive: 0x2a2620 }) });
+page2.material = matLabPaper;
 const page2Hit = hitbox(0.5, 0.3, 0.5, 98.2, 0.85, 3.0);
 inter([page2, page2Hit], 'Coger el papel', () => takePage(2, page2, page2Hit));
 
 // Bidones de aceite (fondo derecha)
 const barrels = [];
 for (const [bx, bz] of [[103.1, -3.1], [102.4, -3.2], [103.15, -2.35]]) {
-  const b = cyl(0.3, 0.3, 0.9, 0x5a3a22, bx, 0.45, bz, { collide: true }); barrels.push(b);
-  cyl(0.31, 0.31, 0.05, 0x3a2414, bx, 0.7, bz, { parent: scene });
+  const b = cyl(0.3, 0.3, 0.9, 0, bx, 0.45, bz, { collide: true, m: matMarineRust }); barrels.push(b);
+  for (const y of [.12, .7]) addTo(matMarineRust, new THREE.CylinderGeometry(.31, .31, .045, 16), V(bx, y, bz));
 }
 inter([...barrels, hitbox(1.4, 1.2, 1.4, 102.85, 0.6, -2.85)], () => S.phase === 'bidon' ? 'Coger un bidón' : 'Bidones de aceite', () => {
   if (S.phase === 'bidon') takeBarrel(); else think('Aceite para la lámpara.');
 });
-cyl(0.3, 0.3, 0.9, 0x4a2e1a, 101.5, 0.3, -3.3).rotation.set(Math.PI / 2, 0, 0.4);
-box(0.6, 0.5, 0.6, 0x3a2a1c, 103.2, 0.25, -1.4, { collide: true }); box(0.5, 0.4, 0.5, 0x3a2a1c, 103.2, 0.7, -1.4).rotation.y = 0.3;
+cyl(0.3, 0.3, 0.9, 0, 101.5, 0.3, -3.3, { m: matMarineRust }).rotation.set(Math.PI / 2, 0, 0.4);
+box(0.6, 0.5, 0.6, 0, 103.2, 0.25, -1.4, { collide: true, m: matWood }); box(0.5, 0.4, 0.5, 0, 103.2, 0.7, -1.4, { m: matWood }).rotation.y = 0.3;
 // Tubo del sótano
 cyl(0.05, 0.05, LAB_H, 0, 101.6, LAB_H / 2, 3.8, { m: brass });
+flushBatches(); // no mezclar los lotes del laboratorio con la zona de la torre
 
 // ---------- Interior del faro: escalera de caracol (en x≈200) ----------
 // La escalera es una hélice: la altura sale del ángulo alrededor de la columna y de la vuelta en la que estás.
@@ -1208,11 +1962,24 @@ floors.push({ kind: 'escalera', at(x, z) {
     const a = (i + 0.5) / STEPS_TURN * Math.PI * 2, y = (i + 1) / STEPS_TURN * PITCH;
     addTo(matMason, boxGeo, V(TW.x + Math.cos(a) * rc, y - 0.1, TW.z + Math.sin(a) * rc), new THREE.Euler(rnd(-0.02, 0.02), -a, rnd(-0.02, 0.02)), V(len, 0.2, 0.64));
   }
-  for (let j = 0; j < 11; j++) {                                  // aspilleras: solo se ve noche
-    const a = j * Math.PI + 2.2, y = a / (Math.PI * 2) * PITCH + 1.6;
-    const s = box(0.08, 0.7, 0.22, 0, TW.x + Math.cos(a) * (TW_R + 0.02), y, TW.z + Math.sin(a) * (TW_R + 0.02), { m: new THREE.MeshBasicMaterial({ color: 0x1f2a33 }) });
-    s.rotation.y = -a;
+  const vista = new THREE.MeshBasicMaterial({ map: tex('assets/vista-mar-aspillera.webp'), color: 0x9caaa6, toneMapped: false, fog: false });
+  vista.customProgramCacheKey = () => 'tower-window-storm-v1';
+  vista.onBeforeCompile = sh => {
+    sh.uniforms.uWindowTime = U.time;
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uWindowTime;')
+      .replace('#include <map_fragment>', '#include <map_fragment>\nfloat pass = pow(max(0.0, sin(uWindowTime * .8 + vMapUv.x * 6.0)), 24.0); diffuseColor.rgb += vec3(.025,.12,.045) * pass;');
+  };
+  const windows = new THREE.Group(); windows.position.set(TW.x, 0, TW.z); scene.add(windows); const cards = [];
+  for (let j = 0; j < 11; j++) {
+    const a = j * Math.PI + 2.2, y = a / (Math.PI * 2) * PITCH + 1.6, x = Math.cos(a) * 2.33, z = Math.sin(a) * 2.33;
+    const rot = new THREE.Euler(0, -a - Math.PI / 2, 0), q = new THREE.Quaternion().setFromEuler(rot);
+    cards.push([new THREE.PlaneGeometry(.38, .75), V(x, y, z), V(1, 1, 1), rot]);
+    for (const side of [-1, 1]) {
+      addTo(matMason, boxGeo, V(side * .24, 0, .02).applyQuaternion(q).add(V(TW.x + x, y, TW.z + z)), rot, V(.09, .9, .16));
+      addTo(matMason, boxGeo, V(0, side * .42, .02).applyQuaternion(q).add(V(TW.x + x, y, TW.z + z)), rot, V(.53, .09, .16));
+    }
   }
+  propBatch(windows, vista, cards);
   flushBatches();
 }
 // Lámparas de gas en la pared: se apagan a tu espalda. Solo 3 luces reales, que siguen a las encendidas más cercanas.
@@ -1282,8 +2049,26 @@ scene.add(rain);
 // ---------- Mano con guante y farol ----------
 const hands = new THREE.Group(); camera.add(hands); hands.visible = false;
 const wool = lam(0x4f443a), iron = lam(0x2a2622);
-const hand = box(0.05, 0.045, 0.11, 0, 0.19, -0.075, -0.44, { m: wool, parent: hands }); hand.rotation.set(0.5, -0.15, -0.1);
-box(0.035, 0.03, 0.05, 0, 0.165, -0.085, -0.4, { m: wool, parent: hands }).rotation.set(0.5, 0.3, 0);   // pulgar
+const hand = new THREE.Group(); hand.position.set(.19, -.075, -.44); hand.rotation.set(.5, -.15, -.1); hands.add(hand);
+{
+  const ball = new THREE.SphereGeometry(1, 12, 9), finger = new THREE.CapsuleGeometry(1, 2, 4, 8);
+  const leather = [[ball, V(0, 0, 0), V(.031, .023, .044)]];
+  for (let i = 0; i < 4; i++) {
+    const x = -.023 + i * .015;
+    leather.push([finger, V(x, -.01, -.035), V(.008, .009, .008), new THREE.Euler(Math.PI / 2, 0, 0)],
+      [ball, V(x, -.025, -.027), V(.009, .012, .012)], [ball, V(x, -.029, -.014), V(.008, .01, .012)]);
+  }
+  leather.push([finger, V(-.033, -.007, .013), V(.01, .012, .01), new THREE.Euler(.4, 0, -.55)], [ball, V(-.019, -.021, -.005), V(.013, .012, .017)]);
+  propBatch(hand, matPlayerGlove, leather);
+  propBatch(hand, lam(0xb79a71, { emissive: 0x160c04 }), Array.from({ length: 14 }, (_, i) => [boxGeo, V(-.025 + (i % 7) * .008, .019, -.019 + Math.floor(i / 7) * .035), V(.0035, .0015, .0012)]));
+  propBatch(hand, matKnit, [[new THREE.CylinderGeometry(.028, .035, .09, 12), V(0, .008, .068), V(1, 1, 1), new THREE.Euler(Math.PI / 2, 0, 0)],
+    [new THREE.TorusGeometry(.028, .006, 5, 14), V(0, 0, .032)]]);
+  ball.dispose(); finger.dispose();
+}
+// Se reutiliza el mismo guante para agarrar los dos largueros durante las transiciones.
+const ladderHands = new THREE.Group(); camera.add(ladderHands); ladderHands.visible = false;
+for (const s of [-1, 1]) { const grip = hand.clone(); grip.position.set(s * .2, -.2, -.28); grip.rotation.set(.1, s * .3, s * .15); grip.scale.x = s; ladderHands.add(grip); }
+noRay(ladderHands);
 const lantern = new THREE.Group(); lantern.position.set(0.19, -0.1, -0.44); hands.add(lantern);   // cuelga de la mano
 const handle = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.006, 6, 14, Math.PI), iron); lantern.add(handle);
 cyl(0.012, 0.05, 0.04, 0, 0, -0.04, 0, { m: iron, parent: lantern });
@@ -1329,17 +2114,19 @@ function makeSketch() {
 async function drawFog() {
   try { await document.fonts.load('110px "Homemade Apple"'); } catch (e) { /* usa la fuente cursiva por defecto */ }
   const g = fogCanvas.getContext('2d');
-  g.fillStyle = 'rgba(214,222,226,0.95)'; g.fillRect(0, 0, 512, 420);
-  for (let i = 0; i < 70; i++) {
-    g.fillStyle = `rgba(230,236,240,${Math.random() * 0.15})`;
-    g.beginPath(); g.arc(Math.random() * 512, Math.random() * 420, 10 + Math.random() * 40, 0, 7); g.fill();
+  g.clearRect(0, 0, 512, 420); g.fillStyle = 'rgba(135,145,150,0.055)'; g.fillRect(0, 0, 512, 420);
+  for (let i = 0; i < 65; i++) {
+    const x = hash2(i, 4) * 512, y = hash2(i, 8) * 420, r = 18 + hash2(i, 2) * 38, gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, 'rgba(160,171,174,.035)'); gr.addColorStop(1, 'rgba(150,160,165,0)'); g.fillStyle = gr; g.fillRect(x - r, y - r, r * 2, r * 2);
   }
   g.globalCompositeOperation = 'destination-out';
-  g.fillStyle = '#000'; g.textAlign = 'center';
+  g.fillStyle = 'rgba(0,0,0,.94)'; g.textAlign = 'center'; g.shadowColor = '#000'; g.shadowBlur = 3;
   g.font = '96px "Homemade Apple", cursive'; g.fillText('NO', 256, 170);
   g.font = '84px "Homemade Apple", cursive'; g.fillText('SUBAS', 256, 300);
-  for (let i = 0; i < 9; i++) { const x = 120 + Math.random() * 280, y = 150 + Math.random() * 170; g.fillRect(x, y, 4, 40 + Math.random() * 80); }
-  g.globalCompositeOperation = 'source-over';
+  g.shadowBlur = 0; g.fillStyle = 'rgba(0,0,0,.45)';
+  for (let i = 0; i < 9; i++) { const x = 120 + hash2(i, 13) * 280, y = 170 + hash2(i, 17) * 145; g.fillRect(x, y, 1.5, 20 + hash2(i, 21) * 65); }
+  g.globalCompositeOperation = 'source-over'; g.strokeStyle = 'rgba(190,205,208,.13)'; g.lineWidth = .7;
+  for (let i = 0; i < 110; i++) { const x = hash2(i, 23) * 512, y = hash2(i, 28) * 420; g.beginPath(); g.ellipse(x, y, .6 + hash2(i, 29), 1.3 + hash2(i, 31) * 2, 0, 0, Math.PI * 2); g.stroke(); }
   fogTex.needsUpdate = true;
 }
 
@@ -1404,14 +2191,21 @@ const A = {
 let voices = [];
 const loadVoices = () => { voices = (speechSynthesis.getVoices() || []).filter((v) => v.lang && v.lang.startsWith('es')); };
 if ('speechSynthesis' in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+// Cada personaje con su timbre: el barquero, viejo, grave y lento; Wexley, culto y algo nervioso.
+// Si hay dos voces masculinas, cada uno usa una distinta; si solo hay una, los separa el tono y la velocidad.
+const VOICE = { Barquero: { pitch: 0.1, rate: 0.7, volume: 1 }, _: { pitch: 0.95, rate: 1.02, volume: 0.85 } };
+function voiceFor(who) {
+  const males = voices.filter((v) => /pablo|jorge|raul|raúl|álvaro|alvaro|diego|enrique|gerardo|tomas|tomás/i.test(v.name));
+  if (!males.length) return voices[0] || null;
+  return who === 'Barquero' ? (males[1] || males[0]) : males[0];
+}
 function speak(who, text) {
   if (!S.voice || !('speechSynthesis' in window)) return;
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text.replace(/[«»]/g, '').replace(/…/g, '...'));
-  u.lang = 'es-ES';
-  const male = voices.find((v) => /pablo|jorge|raul|álvaro|alvaro|diego|enrique/i.test(v.name));
-  u.voice = male || voices[0] || null;
-  u.pitch = who === 'Barquero' ? 0.3 : 0.75; u.rate = who === 'Barquero' ? 0.8 : 0.92; u.volume = 0.9;
+  const p = VOICE[who] || VOICE._, v = voiceFor(who);
+  u.voice = v; u.lang = v ? v.lang : 'es-ES';
+  u.pitch = p.pitch; u.rate = p.rate; u.volume = p.volume;
   speechSynthesis.speak(u);
 }
 const queue = []; let talking = false;
@@ -1466,7 +2260,7 @@ function updateWriter(dt) {
   if (keys.KeyE || writer.holdMouse) {
     const before = Math.floor(writer.progress);
     writer.progress = Math.min(LOG_TEXT.length, writer.progress + dt * 13);
-    if (Math.floor(writer.progress) !== before) A.scratch();
+    if (Math.floor(writer.progress) !== before) { A.scratch(); drawLedgerInk(LOG_TEXT.slice(0, Math.floor(writer.progress))); }
     ui.writeText.textContent = LOG_TEXT.slice(0, Math.floor(writer.progress));
     if (writer.progress >= LOG_TEXT.length) {
       writer.finishing = true;
@@ -1540,7 +2334,7 @@ async function writeLog() {
 }
 async function lightStove() {
   setPhase('esperando'); S.stove = true; A.crackle(10);
-  stoveMouth.material = new THREE.MeshBasicMaterial({ color: 0xff7a2a });
+  stoveMouth.material = new THREE.MeshBasicMaterial({ color: 0x270b04 }); stoveFire.visible = true;
   think('El hierro empieza a calentarse.');
   await wait(2500);
   await drawFog(); S.fogStart = S.time;
@@ -1566,6 +2360,22 @@ function moveCam(to, ms, steps = 0) {
     requestAnimationFrame(tick);
   });
 }
+function ladderMove(toY, ms, rungs, endPitch = -.45) {
+  const from = { x: P.x, y: P.y, z: P.z, pitch }, t0 = performance.now(), showHands = hands.visible;
+  hands.visible = false; ladderHands.visible = true; let sounded = -1;
+  return new Promise(res => {
+    const tick = now => {
+      const t = Math.min(1, (now - t0) / ms), e = t * t * (3 - 2 * t), sway = Math.sin(t * Math.PI), a = t * rungs * Math.PI * 2;
+      P.x = from.x + Math.sin(a) * .014 * sway; P.z = from.z + Math.cos(a) * .006 * sway;
+      P.y = from.y + (toY - from.y) * e + Math.sin(a) * .008 * sway;
+      pitch = from.pitch + (endPitch - from.pitch) * e + Math.sin(a) * .012 * sway;
+      ladderHands.position.y = Math.sin(a) * .012;
+      const rung = Math.floor(t * rungs); if (rung !== sounded && t < 1) { sounded = rung; A.step(true); }
+      if (t < 1) requestAnimationFrame(tick);
+      else { P.set(from.x, toY, from.z); pitch = endPitch; hands.visible = showHands; ladderHands.visible = false; ladderHands.position.y = 0; res(); }
+    }; requestAnimationFrame(tick);
+  });
+}
 async function goDown() {
   setPhase('esperando'); S.cutscene = true;
   await moveCam({ x: 2.3, z: 2.95, yaw: 0, pitch: -0.75 }, 700, 2);
@@ -1573,15 +2383,15 @@ async function goDown() {
   await new Promise((res) => { const t0 = performance.now(); const tick = (now) => {        // se abre la trampilla
     const t = Math.min(1, (now - t0) / 900); trapPivot.rotation.x = -1.95 * t * t * (3 - 2 * t); if (t < 1) requestAnimationFrame(tick); else res(); }; requestAnimationFrame(tick); });
   think('Una escalera de mano baja hacia la oscuridad.');
-  await moveCam({ z: 2.45, pitch: -1.25 }, 700, 1);
-  await moveCam({ y: -1.5, z: 2.2, pitch: -0.2 }, 1500, 4);                                 // bajas por la escalera de mano
-  await fade(1, 350);
+  await moveCam({ x: 2.3, z: 2.0, yaw: Math.PI, pitch: -1.32 }, 700, 1);
+  await ladderMove(-1.55, 1700, 5, -.45);
+  await fade(1, 220);
   setZone('lab');
-  P.set(LAB_STAIRS.x, LAB_H, 3.75); yaw = 0; pitch = -0.45; S.inLab = true; trapPivot.rotation.x = 0;
+  P.set(LAB_LADDER.x, LAB_LADDER.transferY, LAB_LADDER.z); yaw = Math.PI; pitch = -.45; S.inLab = true; trapPivot.rotation.x = 0;
   A.set('sea', 0.03); A.set('rain', 0); A.set('hum', 0.035);
   moon.intensity = 0.03; hemi.intensity = 0.15; ambient.intensity = 0.2;
-  await wait(200); fade(0, 700);
-  await moveCam({ y: 0, z: 0.85, pitch: -0.1 }, 2600, 8);                                   // escalera de piedra del sótano
+  await fade(0, 400);
+  await ladderMove(0, 1900, 6, -.25);
   await moveCam({ x: 102.7, z: 0.6, yaw: 0.25, pitch: 0 }, 600, 1);
   S.vy = 0; S.onGround = true; S.cutscene = false;
   think('El aire sabe a metal.');
@@ -1604,11 +2414,20 @@ async function takeBarrel() {
 }
 const LIGHTS_OUT = { moon: moon.intensity, hemi: hemi.intensity, ambient: ambient.intensity };
 async function returnUp() {
-  A.creak(); await fade(1, 900);
+  setPhase('esperando'); S.cutscene = true; A.creak();
+  await moveCam({ x: LAB_LADDER.x, y: 0, z: LAB_LADDER.z, yaw: Math.PI, pitch: -.25 }, 800, 2);
+  await ladderMove(LAB_LADDER.transferY, 1900, 6, -.45);
+  await fade(1, 220);
   setZone('surface');
-  P.set(2.3, 0, 0.9); yaw = Math.PI; pitch = 0; S.vy = 0; S.onGround = true; S.inLab = false; wasInside = null;
+  P.set(2.3, -1.55, 2.0); yaw = Math.PI; pitch = -.45; S.inLab = false; wasInside = null; trapPivot.rotation.x = -1.95;
   moon.intensity = LIGHTS_OUT.moon; hemi.intensity = LIGHTS_OUT.hemi; ambient.intensity = LIGHTS_OUT.ambient; A.set('hum', 0);
-  await wait(400); await fade(0, 1200);
+  await fade(0, 400); await ladderMove(0, 1700, 5, -1.15);
+  await moveCam({ z: 2.85, pitch: -.65 }, 500, 1);
+  await new Promise(res => { const t0 = performance.now(); const tick = now => {
+    const t = Math.min(1, (now - t0) / 700); trapPivot.rotation.x = -1.95 * (1 - t * t * (3 - 2 * t));
+    if (t < 1) requestAnimationFrame(tick); else res(); }; requestAnimationFrame(tick); });
+  await moveCam({ z: .9, pitch: 0 }, 800, 3);
+  P.set(2.3, 0, .9); yaw = Math.PI; pitch = 0; S.vy = 0; S.onGround = true; S.cutscene = false;
   A.whistle(0.7);
   await say(W, 'Por la puerta del faro, muchacho. Está abierta. Sube con cuidado: los escalones están mojados.');
   setPhase('faro');
@@ -1638,11 +2457,15 @@ function scare() {
   S.scared = true; S.scareT = 0; A.whistle(2.2); A.sting(); S.shake = 0.7;
 }
 async function end() {
-  S.ended = true; await fade(1, 1800);
-  document.exitPointerLock?.();
-  const m = Math.floor(S.time / 60), s = String(Math.floor(S.time % 60)).padStart(2, '0');
-  $('endStats').innerHTML = `Tiempo: ${m}:${s} · Páginas encontradas: ${S.pages.size} de 3`;
-  $('end').style.display = 'flex';
+  S.ended = true; S.cutscene = true; await fade(1, 700);
+  setZone('surface'); S.inTower = false; S.inLab = false; S.onBalcony = true;
+  P.set(LH.x + 2.08, GALLERY.y, LH.z); yaw = -Math.PI / 2; pitch = -.12;
+  S.vy = 0; S.onGround = true; S.ground = 'balcon'; S.paused = false;
+  moon.intensity = LIGHTS_OUT.moon; hemi.intensity = LIGHTS_OUT.hemi; ambient.intensity = LIGHTS_OUT.ambient;
+  A.set('sea', .24); A.set('rain', .04); A.set('hum', 0);
+  $('end').style.display = 'none'; $('pause').style.display = 'none';
+  ui.obj.textContent = 'Fin de la demo — puedes asomarte al balcón';
+  await fade(0, 700); S.cutscene = false;
 }
 
 // ---------- Controles ----------
@@ -1661,7 +2484,7 @@ addEventListener('keyup', (e) => { keys[e.code] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 let dragging = false;
 renderer.domElement.addEventListener('mousedown', () => {
-  if (S.started && !S.ended && !document.pointerLockElement) { dragging = true; requestLock(); }
+  if (S.started && (!S.ended || S.onBalcony) && !document.pointerLockElement) { dragging = true; requestLock(); }
 });
 addEventListener('mouseup', () => { dragging = false; });
 addEventListener('mousemove', (e) => {
@@ -1674,12 +2497,78 @@ addEventListener('mousemove', (e) => {
 function requestLock() { try { const p = renderer.domElement.requestPointerLock(); p?.catch?.(() => {}); } catch (e) { /* sin bloqueo de puntero: se usa arrastrar */ } }
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement) { S.hadLock = true; S.paused = false; $('pause').style.display = 'none'; return; }
-  if (S.started && !S.ended && S.hadLock && !S.modal) { S.paused = true; $('pause').style.display = 'flex'; }
+  if (S.started && (!S.ended || S.onBalcony) && S.hadLock && !S.modal) { S.paused = true; $('pause').style.display = 'flex'; }
 });
 $('resumeBtn').onclick = () => { S.paused = false; $('pause').style.display = 'none'; requestLock(); };
 $('startBtn').onclick = () => {
-  $('start').style.display = 'none'; A.init(); S.started = true; requestLock(); intro();
+  $('start').style.display = 'none'; A.init(); S.started = true; requestLock();
+  if (new URLSearchParams(location.search).has('casa')) {
+    hands.visible = true; lanternGlow.intensity = 3;
+    __dbg.go(0, 2.2, 0, -.1); __dbg.run('enterHouse');
+  } else intro();
 };
+// Controles táctiles: joystick (a fondo corre), arrastrar a la derecha para mirar, giroscopio y botones E / Saltar.
+// El giroscopio suma solo cambios de orientación, así las escenas que mueven la cámara siguen funcionando.
+const touchMove = { f: 0, st: 0, run: false };
+const TOUCH = matchMedia('(pointer: coarse)').matches || new URLSearchParams(location.search).has('tactil');
+if (TOUCH) {
+  const ui = $('touch'), knob = $('knob'), stick = $('stick');
+  const R = 52;
+  let stickId = null, sx = 0, sy = 0;
+  stick.addEventListener('pointerdown', (e) => { stickId = e.pointerId; stick.setPointerCapture(e.pointerId);
+    const r = stick.getBoundingClientRect(); sx = r.left + r.width / 2; sy = r.top + r.height / 2; moveStick(e); });
+  stick.addEventListener('pointermove', (e) => { if (e.pointerId === stickId) moveStick(e); });
+  const endStick = (e) => { if (e.pointerId !== stickId) return; stickId = null; touchMove.f = touchMove.st = 0; touchMove.run = false; knob.style.transform = ''; };
+  stick.addEventListener('pointerup', endStick); stick.addEventListener('pointercancel', endStick);
+  function moveStick(e) {
+    let dx = e.clientX - sx, dy = e.clientY - sy; const d = Math.hypot(dx, dy);
+    if (d > R) { dx *= R / d; dy *= R / d; }
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    const k = Math.min(1, d / R);
+    touchMove.st = k < 0.15 ? 0 : dx / R; touchMove.f = k < 0.15 ? 0 : -dy / R; touchMove.run = k > 0.95;
+  }
+  const pad = $('lookPad'); let lookId = null, lx = 0, ly = 0;
+  pad.addEventListener('pointerdown', (e) => { lookId = e.pointerId; pad.setPointerCapture(e.pointerId); lx = e.clientX; ly = e.clientY; });
+  pad.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== lookId || !S.started || S.paused || S.modal === 'writer') return;
+    yaw -= (e.clientX - lx) * 0.005; pitch = Math.max(-1.45, Math.min(1.45, pitch - (e.clientY - ly) * 0.005)); lx = e.clientX; ly = e.clientY;
+  });
+  const endLook = (e) => { if (e.pointerId === lookId) lookId = null; };
+  pad.addEventListener('pointerup', endLook); pad.addEventListener('pointercancel', endLook);
+  const hold = (el, down, up) => {
+    el.addEventListener('pointerdown', (e) => { e.preventDefault(); el.classList.add('down'); el.setPointerCapture(e.pointerId); down(); });
+    const off = () => { el.classList.remove('down'); up && up(); };
+    el.addEventListener('pointerup', off); el.addEventListener('pointercancel', off);
+  };
+  hold($('btnUse'), () => { keys.KeyE = true; onUse(); }, () => { keys.KeyE = false; });
+  hold($('btnJump'), () => { jumpQueued = true; });
+  // Giroscopio: orientación del teléfono → dirección de la cámara; se aplican solo las diferencias entre lecturas
+  const gyro = { on: true, last: null };
+  const _e = new THREE.Euler(), _q = new THREE.Quaternion(), _qs = new THREE.Quaternion(), _d = new THREE.Vector3();
+  const _back = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)), _z = new THREE.Vector3(0, 0, 1);
+  addEventListener('deviceorientation', (ev) => {
+    if (ev.alpha === null) return;
+    const deg = Math.PI / 180, screenAng = (screen.orientation ? screen.orientation.angle : (window.orientation || 0)) * deg;
+    _e.set(ev.beta * deg, ev.alpha * deg, -ev.gamma * deg, 'YXZ');
+    _q.setFromEuler(_e).multiply(_back).multiply(_qs.setFromAxisAngle(_z, -screenAng));
+    _d.set(0, 0, -1).applyQuaternion(_q);
+    const gy = Math.atan2(-_d.x, -_d.z), gp = Math.asin(Math.max(-1, Math.min(1, _d.y)));
+    const l = gyro.last; gyro.last = { gy, gp };
+    if (!l || !gyro.on || !S.started || S.paused || S.modal || S.cutscene) return;
+    let dy = gy - l.gy; if (dy > Math.PI) dy -= 2 * Math.PI; if (dy < -Math.PI) dy += 2 * Math.PI;
+    if (Math.abs(dy) > 0.5 || Math.abs(gp - l.gp) > 0.5) return;              // salto brusco (p. ej. al girar la pantalla)
+    yaw += dy; pitch = Math.max(-1.45, Math.min(1.45, pitch + (gp - l.gp)));
+  });
+  $('btnGyro').addEventListener('pointerdown', (e) => { e.preventDefault(); gyro.on = !gyro.on; gyro.last = null; $('btnGyro').classList.toggle('off', !gyro.on);
+    think(gyro.on ? 'Giroscopio activado.' : 'Giroscopio desactivado: arrastra a la derecha para mirar.'); });
+  // iPhone pide permiso para el giroscopio; tiene que ser dentro del toque en «Empezar»
+  $('startBtn').addEventListener('click', () => {
+    ui.classList.add('on');
+    try { screen.orientation?.lock?.('landscape').catch(() => {}); } catch (e) { /* no todos los navegadores lo permiten */ }
+    if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission)
+      DeviceOrientationEvent.requestPermission().then((r) => { if (r !== 'granted') { gyro.on = false; $('btnGyro').classList.add('off'); } }).catch(() => {});
+  });
+}
 let focus = null;
 function onUse() {
   if (S.modal === 'reader') { closeReader(); return; }
@@ -1691,6 +2580,7 @@ function onUse() {
 const PR = 0.3, STEP = 0.45, GRAV = 15, JUMP_V = 5.4;
 let why = '';                                                   // motivo del último bloqueo (depuración)
 function blocked(x, z) {
+  if (S.onBalcony) { const r = Math.hypot(x - LH.x, z - LH.z); return r < GALLERY.inner || r > GALLERY.outer; }
   if (x > 150) { const r = Math.hypot(x - TW.x, z - TW.z); return r > TW_R - 0.3 || r < TW_COL + 0.3; }
   if (x > 90) return !(x > LAB.minX && x < LAB.maxX && z > LAB.minZ && z < LAB.maxZ)
     || colliders.some((c) => x > c.minX - PR && x < c.maxX + PR && z > c.minZ - PR && z < c.maxZ + PR);
@@ -1713,6 +2603,7 @@ function blocked(x, z) {
 }
 S.vy = 0; S.onGround = true; S.ground = 'muelle'; S.safe = { x: P.x, y: P.y, z: P.z };
 function physics(dt) {
+  if (S.onBalcony) { P.y = GALLERY.y; S.vy = 0; S.onGround = true; jumpQueued = false; return; }
   if (S.onGround && jumpQueued && !S.modal) { S.vy = JUMP_V; S.onGround = false; }
   jumpQueued = false;
   if (S.onGround) {
@@ -1815,13 +2706,13 @@ function loop(now) {
   S.time += S.ended ? 0 : dt;
 
   // Movimiento
-  if (dt && !S.modal && !S.ended && !S.cutscene) {
+  if (dt && !S.modal && (!S.ended || S.onBalcony) && !S.cutscene) {
     if (keys.ArrowLeft) yaw += 1.9 * dt;
     if (keys.ArrowRight) yaw -= 1.9 * dt;
-    const f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
-    const st = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+    const f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0) + touchMove.f;
+    const st = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + touchMove.st;
     if (f || st) {
-      const sp = (keys.ShiftLeft || keys.ShiftRight ? 3.8 : 2.4) * dt / Math.hypot(f, st);
+      const sp = (keys.ShiftLeft || keys.ShiftRight || touchMove.run ? 3.8 : 2.4) * dt / Math.max(1, Math.hypot(f, st));
       const dx = (-Math.sin(yaw) * f + Math.cos(yaw) * st) * sp, dz = (-Math.cos(yaw) * f - Math.sin(yaw) * st) * sp;
       const ox = P.x, oz = P.z;
       if (!blocked(P.x + dx, P.z)) P.x += dx;
@@ -1836,7 +2727,7 @@ function loop(now) {
       }
     }
   }
-  if (dt && !S.respawning && !S.ended && !S.cutscene) physics(dt);
+  if (dt && !S.respawning && (!S.ended || S.onBalcony) && !S.cutscene) physics(dt);
   let shakeX = 0, shakeY = 0;
   if (S.shake > 0) { S.shake -= realDt; shakeX = (Math.random() - 0.5) * 0.08 * S.shake; shakeY = (Math.random() - 0.5) * 0.08 * S.shake; }
   camera.position.set(P.x + shakeX, P.y + 1.6 + Math.sin(bob) * 0.035 + shakeY, P.z);
@@ -1862,12 +2753,11 @@ function loop(now) {
   if (S.inTower && dt) updateTower();
 
   // Faro y lluvia
-  beamPivot.rotation.y += realDt * 0.55; optic.rotation.y = beamPivot.rotation.y; U.time.value = now / 1000;
+  beamPivot.rotation.y += realDt * 0.55; optic.rotation.y = beamPivot.rotation.y; U.time.value = now / 1000; updateBeamGlow();
   TEX.mar.offset.set(now * 0.000004, now * 0.000009);       // el oleaje avanza
   if (rain.visible) {
     rain.position.set(Math.round(P.x), Math.round(P.y) - 3, Math.round(P.z));
   }
-  for (const h of gulls) h.lookAt(camera.position);
   if (S.boatLeaving && boat.parent) {
     boat.position.z -= realDt * 1.6; boat.position.x += realDt * 0.5;
     if (boat.position.z < -95) scene.remove(boat);
@@ -1911,12 +2801,12 @@ function loop(now) {
     S.scareT += realDt;
     const t = S.scareT;
     torso.rotation.z = -Math.PI / 2 * Math.min(1, t / 0.18) + (t < 0.4 ? Math.sin(t * 40) * 0.05 * (0.4 - t) : 0);
-    if (t < 1.2) { sheet.position.y = 0.17 - t * 0.6; sheet.position.x = -0.5 + t * 0.5; sheet.rotation.z = t * 1.2; }
+    if (t < 1.2) { sheet.position.y = .11 - t * .22; sheet.position.x = .08 + t * .12; sheet.rotation.z = t * .45; }
     else sheet.visible = false;
-    if (t > 1.6) head.rotation.z = Math.min(1, (t - 1.6) / 2.2) * Math.PI / 2 * 0.85;
+    if (t > 1.6) head.rotation.z = Math.min(1, (t - 1.6) / 2.2) * Math.PI / 2 * .55;
     const flick = t < 1.5 ? Math.random() < 0.5 : true;
     bulb.intensity = flick ? 2.5 : 0;
-    labGreen.forEach((l) => { l.intensity = t < 1.5 ? 6 + Math.random() * 10 : 6; });
+    labGreen.forEach((l, i) => { l.intensity = t < 1.5 ? .5 + Math.random() * 3 : (i ? 1.6 : 2.1); });
   }
 
   // Interacción (cada 2 fotogramas, solo contra la zona actual)
@@ -1930,7 +2820,6 @@ function loop(now) {
   if (S.zone === 'surface') {
     let best = pathLights[0]; for (const p of pathLights) if (p.distanceToSquared(P) < best.distanceToSquared(P)) best = p;
     pathLight.position.copy(best);
-    for (const m of mist) { m.position.x += m.userData.drift * realDt; if (m.position.x > 70) m.position.x -= 140; }
   }
   updateFps(now);
   if (focus) {
