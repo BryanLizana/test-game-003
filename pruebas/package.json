@@ -6,7 +6,8 @@
     "partida": "node test.js",
     "subida": "node climb.js",
     "senda": "node scan.js",
-    "vistas": "node views.js"
+    "vistas": "node views.js",
+    "tactil": "node tactil.js"
   },
   "dependencies": {
     "puppeteer-core": "^25.16.0",

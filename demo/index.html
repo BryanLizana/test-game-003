@@ -2494,7 +2494,8 @@ addEventListener('mousemove', (e) => {
     pitch = Math.max(-1.45, Math.min(1.45, pitch));
   }
 });
-function requestLock() { try { const p = renderer.domElement.requestPointerLock(); p?.catch?.(() => {}); } catch (e) { /* sin bloqueo de puntero: se usa arrastrar */ } }
+// En pantallas táctiles no se bloquea el puntero: el bloqueo se pierde al tocar y el juego se pausaba
+function requestLock() { if (TOUCH) return; try { const p = renderer.domElement.requestPointerLock(); p?.catch?.(() => {}); } catch (e) { /* sin bloqueo de puntero: se usa arrastrar */ } }
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement) { S.hadLock = true; S.paused = false; $('pause').style.display = 'none'; return; }
   if (S.started && (!S.ended || S.onBalcony) && S.hadLock && !S.modal) { S.paused = true; $('pause').style.display = 'flex'; }
